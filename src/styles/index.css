@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+@theme {
+  --color-crystal-cyan: #00E5FF;
+  --color-crystal-pink: #FF007F;
+  --color-crystal-bg: #0a0a0f;
+  --color-crystal-card: #1a1a2e;
+  --color-crystal-surface: #12121f;
+  --color-crystal-border: #2a2a3e;
+}
+
+html, body, #root {
+  height: 100dvh;
+  margin: 0;
+  padding: 0;
+  background: #0a0a0f;
+  color: #e0e0e0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer utilities {
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
