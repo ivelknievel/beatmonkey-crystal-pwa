@@ -446,7 +446,7 @@ function parseTime(str: string): number {
 
 
 export async function getRecentSets(): Promise<SetInfo[]> {
-  const cached = await get<SetInfo[]>('sets', 'recent_sets');
+  const cached = await get<SetInfo[]>('sets', 'recent_sets_v2');
   if (cached && cached.length > 0) {
     fetchRecentSetsNetwork().catch(() => {});
     return cached;
@@ -469,7 +469,7 @@ async function fetchRecentSetsNetwork(): Promise<SetInfo[]> {
         genre: a.genre || 'Electronic',
         festival: a.album || a.parent || 'Festival Live',
       }));
-      await set('sets', 'recent_sets', sets, TTL.SET);
+      await set('sets', 'recent_sets_v2', sets, TTL.SET);
       return sets;
     }
   } catch (err) {
@@ -492,7 +492,7 @@ async function fetchRecentSetsNetwork(): Promise<SetInfo[]> {
           genre: 'Electronic',
           festival: a.name?.includes('EDC') ? 'EDC Las Vegas' : a.name?.includes('Lollapalooza') ? 'Lollapalooza' : 'Festival Live',
         }));
-        await set('sets', 'recent_sets', sets, TTL.SET);
+        await set('sets', 'recent_sets_v2', sets, TTL.SET);
         return sets;
       }
     }
@@ -537,7 +537,7 @@ async function fetchRecentSetsNetwork(): Promise<SetInfo[]> {
     },
   ];
 
-  await set('sets', 'recent_sets', fallbackSets, TTL.SET);
+  await set('sets', 'recent_sets_v2', fallbackSets, TTL.SET);
   return fallbackSets;
 }
 
