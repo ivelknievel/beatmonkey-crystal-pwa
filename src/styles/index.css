@@ -20,12 +20,52 @@ html, body, #root {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Form controls stay readable and do not request iPhone focus zoom. */
+input, select, textarea { font-size: 16px; }
+:focus-visible { outline: 2px solid #00E5FF; outline-offset: 3px; }
+.pwa-update-prompt {
+  position: fixed;
+  z-index: 100;
+  left: max(1rem, env(safe-area-inset-left, 0px));
+  right: max(1rem, env(safe-area-inset-right, 0px));
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  padding: 1rem;
+  border: 1px solid #00E5FF;
+  border-radius: 1rem;
+  background: #12121f;
+}
+/* QueueSheet is viewport-fixed: its parent player's padding cannot protect it. */
+.queue-focus-scope > div > div:nth-child(2) {
+  padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+  padding-left: max(1.25rem, env(safe-area-inset-left, 0px));
+  padding-right: max(1.25rem, env(safe-area-inset-right, 0px));
+}
+.pwa-update-prompt button { min-height: 44px; }
+.pwa-update-prompt button:disabled { opacity: .5; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 @layer utilities {
   .safe-bottom {
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
   .safe-top {
     padding-top: env(safe-area-inset-top, 0px);
+  }
+  .safe-sides {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  /* Fixed descendants do not inherit the ancestor's safe-area padding. */
+  .safe-sheet {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
   }
   .scrollbar-none {
     scrollbar-width: none;

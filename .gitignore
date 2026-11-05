@@ -25,3 +25,15 @@ dist-ssr
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+# Local configuration and generated verification artifacts
+.env
+.env.*
+!.env.example
+/test-results/
+/playwright-report/
+*.tsbuildinfo
+
+# Python test caches
+__pycache__/
+*.py[cod]

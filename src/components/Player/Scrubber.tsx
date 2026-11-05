@@ -14,7 +14,6 @@ export function Scrubber() {
   const currentTimeRef = useRef<HTMLSpanElement>(null);
   const dragProgressPctRef = useRef<number>(0);
   const isDraggingRef = useRef<boolean>(false);
-  const lastActiveCueRef = useRef<number>(-1);
 
   const [isDragging, setIsDragging] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
@@ -23,17 +22,13 @@ export function Scrubber() {
 
   const durationStore = usePlayerStore((s) => s.duration);
   const currentSet = usePlayerStore((s) => s.currentSet);
-  const setActiveCueIndex = usePlayerStore((s) => s.setActiveCueIndex);
+  const currentTime = usePlayerStore((s) => s.currentTime);
 
   const cues = currentSet?.tracklist || EMPTY_CUES;
-  const duration = durationStore || currentSet?.duration || 0;
+  const rawDuration = durationStore || currentSet?.duration || 0;
+  const duration = Number.isFinite(rawDuration) ? Math.max(0, rawDuration) : 0;
 
-  const cuesRef = useRef(cues);
   const durationRef = useRef(duration);
-
-  useEffect(() => {
-    cuesRef.current = cues;
-  }, [cues]);
 
   useEffect(() => {
     durationRef.current = duration;
@@ -69,22 +64,9 @@ export function Scrubber() {
             currentTimeRef.current.textContent = formatTime(ct);
           }
 
-          // Check active cue
-          const currentCues = cuesRef.current;
-          if (currentCues.length > 0) {
-            let activeIdx = -1;
-            for (let i = 0; i < currentCues.length; i++) {
-              if (currentCues[i].timeSec <= ct) {
-                activeIdx = i;
-              } else {
-                break;
-              }
-            }
-            if (activeIdx !== lastActiveCueRef.current) {
-              lastActiveCueRef.current = activeIdx;
-              setActiveCueIndex(activeIdx);
-            }
-          }
+          // Cue ownership remains in the generation-bound player store.
+          seekRef.current?.setAttribute('aria-valuenow', String(Math.min(dur, Math.max(0, ct))));
+          seekRef.current?.setAttribute('aria-valuetext', `${formatTime(ct)} van ${formatTime(dur)}`);
         }
       }
 
@@ -93,7 +75,7 @@ export function Scrubber() {
 
     rafId = requestAnimationFrame(update);
     return () => cancelAnimationFrame(rafId);
-  }, [setActiveCueIndex]);
+  }, []);
 
   const calculatePct = useCallback((clientX: number): number => {
     if (!seekRef.current) return 0;
@@ -202,7 +184,21 @@ export function Scrubber() {
         onPointerCancel={handlePointerCancel}
         onPointerEnter={() => !isDragging && setShowPreview(true)}
         onPointerLeave={() => !isDragging && setShowPreview(false)}
+        tabIndex={0}
+        onKeyDown={(e) => {
+          const dur = durationRef.current;
+          if (dur <= 0) return;
+          const now = AudioEngine.getCurrentTime();
+          const targets: Record<string, number> = { ArrowRight: now + 5, ArrowUp: now + 5, ArrowLeft: now - 5, ArrowDown: now - 5, PageUp: now + 60, PageDown: now - 60, Home: 0, End: dur };
+          if (!(e.key in targets)) return;
+          e.preventDefault();
+          AudioEngine.seek(Math.max(0, Math.min(dur, targets[e.key])));
+        }}
         role="slider"
+        aria-orientation="horizontal"
+        aria-disabled={duration <= 0}
+        aria-valuenow={Math.max(0, Math.min(duration, Number.isFinite(currentTime) ? currentTime : 0))}
+        aria-valuetext={`${formatTime(currentTime)} van ${formatTime(duration)}`}
         aria-label="Tijdlijn"
         aria-valuemin={0}
         aria-valuemax={duration}

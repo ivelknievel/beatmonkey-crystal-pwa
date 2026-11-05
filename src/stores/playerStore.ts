@@ -1,20 +1,31 @@
 import { create } from 'zustand';
+import { findActiveCueIndex } from '../utils/cues';
 import { AudioEngine } from '../engine/AudioEngine';
 import type { ArtistInfo, AudioState, FestivalInfo, PlayerStatus, SetInfo, TrackCue } from '../types';
 import { getAlbum, getStarred, starAlbum, unstarAlbum, getPlayQueue, getCoverUrl } from '../services/subsonic';
 
 const LIKED_SETS_STORAGE_KEY = 'beatmonkey_liked_sets';
-
+let accountScope: string | null = null;
+let accountGeneration = 0;
+let selectionGeneration = 0;
+let likesGeneration = 0;
+const likeRequests = new Map<string, number>();
+function likedStorageKey(): string | null {
+  return accountScope === null ? null : `${LIKED_SETS_STORAGE_KEY}:${encodeURIComponent(accountScope)}`;
+}
 function getInitialLikedSets(): string[] {
   try {
-    const raw = localStorage.getItem(LIKED_SETS_STORAGE_KEY);
-    if (raw) {
-      return JSON.parse(raw);
-    }
-  } catch (e) {
-    console.warn('Failed to load liked sets from storage', e);
-  }
-  return [];
+    const key = likedStorageKey();
+    if (!key) return [];
+    const value: unknown = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
+  } catch { return []; }
+}
+function persistLikes(ids: string[]) {
+  try { const key = likedStorageKey(); if (key) localStorage.setItem(key, JSON.stringify(ids)); } catch { /* storage is optional */ }
+}
+function safePosition(time: number, duration = 0) {
+  return Number.isFinite(time) ? Math.min(Math.max(time, 0), Number.isFinite(duration) && duration > 0 ? duration : Infinity) : 0;
 }
 
 export interface PlayerStoreState extends AudioState {
@@ -27,8 +38,15 @@ export interface PlayerStoreState extends AudioState {
 }
 
 export interface PlayerActions {
+  setAccountScope: (scope: string | null) => void;
+  resetPlayer: () => void;
   setStatus: (status: PlayerStatus) => void;
-  loadSet: (set: SetInfo, startTime?: number) => Promise<void> | void;
+  /**
+   * `signal` cancels only this pending selection (route navigation/unmount).
+   * It never resets the engine: an already started load keeps playing unless a
+   * newer selection supersedes it, and no further mutation happens after abort.
+   */
+  loadSet: (set: SetInfo, startTime?: number, signal?: AbortSignal) => Promise<void> | void;
   play: () => Promise<void>;
   pause: () => void;
   togglePlay: () => void;
@@ -64,6 +82,7 @@ export type PlayerStore = PlayerStoreState & PlayerActions;
 const initialAudioState: AudioState = {
   status: 'idle',
   currentSetId: null,
+  currentSongId: null,
   currentSet: null,
   currentTime: 0,
   duration: 0,
@@ -89,128 +108,97 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
 
   setStatus: (status) => set({ status }),
 
-  setCurrentTime: (currentTime: number) => set({ currentTime }),
+  setCurrentTime: (currentTime: number) => get().seek(currentTime),
 
-  loadSet: async (setInfo: SetInfo, startTime = 0) => {
-    let targetStartTime = startTime;
+  resetPlayer: () => {
+    selectionGeneration++;
+    AudioEngine.reset();
+    set({ ...initialAudioState, queue: [] });
+  },
 
+  setAccountScope: (scope) => {
+    if (accountScope === scope) return;
+    // Credentials may already have changed: reset must never save outgoing media.
+    accountGeneration++;
+    likesGeneration++;
+    likeRequests.clear();
+    get().resetPlayer();
+    accountScope = scope;
+    set({ likedSetIds: getInitialLikedSets(), festivals: [], recentSets: [], artists: [], user: null, authToken: null });
+  },
+
+  loadSet: async (setInfo: SetInfo, startTime = 0, signal?: AbortSignal) => {
+    // A caller that is already gone must not supersede or touch the current selection.
+    if (signal?.aborted) return;
+    const selected = ++selectionGeneration;
+    const account = accountGeneration;
+    const active = () => !signal?.aborted && selected === selectionGeneration && account === accountGeneration;
+    // Stop the old source before any async lookup can let its events overwrite selection state.
+    AudioEngine.pause();
+    set({ currentSetId: setInfo.id, currentSongId: null, currentSet: setInfo,
+      currentTime: safePosition(startTime, setInfo.duration), duration: setInfo.duration || 0,
+      status: 'loading', isPlaying: false, error: null, activeCueIndex: -1 });
     try {
-      let songId = setInfo.id;
-      let albumSongs: any[] = [];
-      if (!setInfo.id.startsWith('http://') && !setInfo.id.startsWith('https://')) {
-        const album = await getAlbum(setInfo.id);
-        const songs = album?.album?.song;
-        if (!songs || songs.length === 0) {
-          throw new Error('Geen tracks gevonden in deze set');
-        }
-        albumSongs = songs;
-        songId = songs[0].id;
+      let songId = setInfo.songId || setInfo.id;
+      const external = /^https?:\/\//.test(setInfo.id);
+      if (!external) {
+        const data = await getAlbum(setInfo.id);
+        if (!active()) return;
+        const songs = data?.album?.song || [];
+        const song = setInfo.songId ? songs.find((s: { id: string }) => s.id === setInfo.songId) : songs[0];
+        if (!song) throw new Error('Geen tracks gevonden in deze set');
+        songId = song.id;
       }
-
+      if (!active()) return;
+      const resolvedSet = { ...setInfo, songId };
       const queue = get().queue;
-      let queueIndex = queue.findIndex((item) => item.id === setInfo.id);
-
-      if (queueIndex === -1) {
-        set({
-          queue: [...queue, setInfo],
-          queueIndex: queue.length,
-          currentSetId: setInfo.id,
-          currentSet: setInfo,
-          currentTime: targetStartTime,
-          duration: setInfo.duration || 0,
-          status: 'loading',
-          error: null,
-        });
-      } else {
-        set({
-          queueIndex,
-          currentSetId: setInfo.id,
-          currentSet: setInfo,
-          currentTime: targetStartTime,
-          duration: setInfo.duration || 0,
-          status: 'loading',
-          error: null,
-        });
-      }
-
-      AudioEngine.loadSet(songId, targetStartTime, setInfo);
-
-      // Na het laden van de audio, check playqueue
-      if (!window.location.pathname.startsWith('/app/set/') && targetStartTime === 0 && !setInfo.id.startsWith('http://') && !setInfo.id.startsWith('https://')) {
+      const existing = queue.findIndex(item => item.id === setInfo.id);
+      const queueIndex = existing < 0 ? queue.length : existing;
+      const nextQueue = existing < 0 ? [...queue, resolvedSet] : queue.map((item, i) => i === existing ? resolvedSet : item);
+      set({ currentSet: resolvedSet, currentSongId: songId, queue: nextQueue, queueIndex });
+      await AudioEngine.loadSet(songId, safePosition(startTime, setInfo.duration), resolvedSet);
+      // The engine start is already committed; only skip this call's continuations.
+      if (!active()) return;
+      if (!external && startTime === 0 && !setInfo.songId && !window.location.pathname.startsWith('/app/set/')) {
         try {
           const pq = await getPlayQueue();
-          if (pq && pq.songId && pq.position > 0) {
-            // Zoek naar de song die matcht met deze set
-            // We hebben album ID van de set, check of pq.albumId matcht
-            let sameAlbum = pq.albumId === setInfo.id;
-
-            // Als de playqueue geen albumId heeft, probeer dan de song ID te matchen aan de tracks van het album via Subsonic getAlbum
-            if (!sameAlbum) {
-              if (pq.songId === songId || pq.songId === setInfo.id) {
-                sameAlbum = true;
-              } else if (albumSongs.some((s) => s.id === pq.songId)) {
-                sameAlbum = true;
-              } else if (!pq.albumId) {
-                const alb = await getAlbum(setInfo.id);
-                const tracks = alb?.album?.song || [];
-                if (tracks.some((s: any) => s.id === pq.songId)) {
-                  sameAlbum = true;
-                }
-              }
-            }
-
-            if (sameAlbum && pq.position > 0) {
-              // Positie is in ms, AudioEngine.currentTime is in seconds
-              const resumeTime = pq.position / 1000;
-              console.log(`Hervatten vanaf ${resumeTime.toFixed(0)}s (server playqueue)`);
-              AudioEngine.seekTo(resumeTime);
-              get().setCurrentTime(resumeTime);
-            }
-          }
-        } catch {
-          /* ignore play queue fetch errors */
-        }
+          if (!active()) return;
+          // Never apply another song's offset, even when it belongs to this album.
+          if (pq?.songId === songId && Number.isFinite(pq.position) && pq.position > 0) AudioEngine.seek(pq.position / 1000);
+        } catch { /* resume is optional */ }
       }
     } catch (err) {
-      set({ status: 'error', error: err instanceof Error ? err.message : 'Fout bij laden' });
+      if (!active()) return;
+      set({ status: 'error', isPlaying: false, error: err instanceof Error ? err.message : 'Fout bij laden' });
     }
   },
 
   restoreLastPosition: async () => {
-    // Keep a mandatory-login share target intact, including after OAuth.
-    if (window.location.pathname.startsWith('/app/set/') || sessionStorage.getItem('auth_return_url')?.startsWith('/set/')) return;
+    let pendingShare = false;
+    try { pendingShare = !!sessionStorage.getItem('auth_return_url')?.startsWith('/set/'); } catch { /* optional storage */ }
+    if (window.location.pathname.startsWith('/app/set/') || pendingShare || get().currentSetId) return;
+    const selected = ++selectionGeneration;
+    const account = accountGeneration;
+    const active = () => selected === selectionGeneration && account === accountGeneration;
     try {
       const pq = await getPlayQueue();
-      if (!pq || !pq.songId) return;
-
-      const targetId = pq.albumId || pq.songId;
-      if (!targetId) return;
-
-      const albumData = await getAlbum(targetId).catch(() => null);
-      if (albumData?.album) {
-        const album = albumData.album;
-        const setInfo: SetInfo = {
-          id: album.id,
-          title: album.title || album.name || 'Live Set',
-          artist: album.artist || 'Unknown',
-          coverArt: getCoverUrl(album.coverArt || album.id),
-          duration: album.duration || 0,
-          year: album.year || 0,
-          genre: album.genre || '',
-        };
-        const posSec = pq.position > 1000 ? pq.position / 1000 : pq.position;
-        set({
-          currentSetId: setInfo.id,
-          currentSet: setInfo,
-          currentTime: posSec,
-          duration: setInfo.duration || 0,
-          queue: [setInfo],
-          queueIndex: 0,
-        });
-      }
-    } catch {
-      /* ignore */
-    }
+      if (!active() || !pq?.songId) return;
+      const data = await getAlbum(pq.albumId || pq.songId);
+      if (!active() || !data?.album) return;
+      const album = data.album;
+      if (!album.song?.some((song: { id: string }) => song.id === pq.songId)) return;
+      const setInfo: SetInfo = { id: album.id, songId: pq.songId,
+        title: album.title || album.name || 'Live Set', artist: album.artist || 'Unknown',
+        coverArt: getCoverUrl(album.coverArt || album.id), duration: album.duration || 0,
+        year: album.year, genre: album.genre };
+      // Subsonic playqueue positions are always milliseconds, including <1000ms.
+      const position = safePosition(pq.position / 1000, setInfo.duration);
+      set({ currentSetId: setInfo.id, currentSongId: pq.songId, currentSet: setInfo,
+        currentTime: position, duration: setInfo.duration, queue: [setInfo], queueIndex: 0,
+        isPlaying: false, activeCueIndex: -1, error: null });
+      await AudioEngine.loadSet(pq.songId, position, setInfo, false);
+      if (!active()) return;
+    } catch { /* optional restore must not replace explicit selection */ }
   },
 
   play: async () => {
@@ -227,7 +215,6 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
 
   seek: (time) => {
     AudioEngine.seek(time);
-    set({ currentTime: time });
   },
 
   skipForward: (seconds = 15) => {
@@ -299,38 +286,34 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
 
   syncLikedSets: async () => {
+    const account = accountGeneration;
+    const request = ++likesGeneration;
     try {
       const starred = await getStarred();
-      if (starred.length > 0) {
-        const ids = starred.map((s) => s.id);
-        set({ likedSetIds: ids });
-        localStorage.setItem(LIKED_SETS_STORAGE_KEY, JSON.stringify(ids));
-      }
-    } catch {
-      /* silent */
-    }
+      if (account !== accountGeneration || request !== likesGeneration) return;
+      const ids = [...new Set(starred.map(s => s.id))];
+      set({ likedSetIds: ids });
+      persistLikes(ids);
+    } catch { /* failed fetch is not a successful empty list */ }
   },
 
   toggleLike: async (setId: string) => {
-    const current = get().likedSetIds;
-    const isLiked = current.includes(setId);
-
-    // Optimistic update
-    const updated = isLiked
-      ? current.filter((id) => id !== setId)
-      : [...current, setId];
-    set({ likedSetIds: updated });
+    const account = accountGeneration;
+    const request = ++likesGeneration;
+    likeRequests.set(setId, request);
+    const wasLiked = get().likedSetIds.includes(setId);
+    const apply = (liked: boolean) => {
+      const ids = get().likedSetIds.filter(id => id !== setId);
+      if (liked) ids.push(setId);
+      set({ likedSetIds: ids });
+      persistLikes(ids);
+    };
+    apply(!wasLiked);
     try {
-      localStorage.setItem(LIKED_SETS_STORAGE_KEY, JSON.stringify(updated));
-    } catch (e) {
-      console.warn('Failed to save liked sets', e);
-    }
-
-    // Backend sync (async, non-blocking)
-    if (isLiked) {
-      await unstarAlbum(setId);
-    } else {
-      await starAlbum(setId);
+      const result = await (wasLiked ? unstarAlbum(setId) : starAlbum(setId));
+      if (result === false) throw new Error('Favoriet niet opgeslagen');
+    } catch {
+      if (account === accountGeneration && likeRequests.get(setId) === request) apply(wasLiked);
     }
   },
 
@@ -343,49 +326,25 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   setArtists: (artists) => set({ artists }),
 
   setTracklistForSet: (setId, tracklist) => {
-    const { currentSet, queue } = get();
-    if (currentSet && currentSet.id === setId) {
-      set({ currentSet: { ...currentSet, tracklist } });
-    }
-    const updatedQueue = queue.map((s) => (s.id === setId ? { ...s, tracklist } : s));
-    set({ queue: updatedQueue });
-
-    // Herbereken activeCueIndex op basis van currentTime + nieuwe tracklist
-    if (tracklist && tracklist.length > 0) {
-      let lo = 0, hi = tracklist.length - 1;
-      const time = get().currentTime;
-      while (lo <= hi) {
-        const mid = Math.floor((lo + hi) / 2);
-        if (time < tracklist[mid].timeSec) hi = mid - 1;
-        else lo = mid + 1;
-      }
-      const newActiveCue = Math.max(0, lo - 1);
-      if (get().activeCueIndex !== newActiveCue) {
-        set({ activeCueIndex: newActiveCue });
-      }
-    }
+    const { currentSet, queue, currentTime } = get();
+    // Late/non-current results cannot mutate any active player state.
+    if (!currentSet || currentSet.id !== setId) return;
+    set({ currentSet: { ...currentSet, tracklist },
+      queue: queue.map(item => item.id === setId ? { ...item, tracklist } : item),
+      activeCueIndex: findActiveCueIndex(tracklist, currentTime) });
   },
 }));
 
-// Bind AudioEngine state events to PlayerStore
+// Permanent subscription survives reset/account changes.
 AudioEngine.onStateChange((stateUpdate) => {
+  // While metadata resolves, the old element may still dispatch queued events.
+  const expected = usePlayerStore.getState();
+  if (stateUpdate.status !== 'idle' && expected.currentSetId &&
+    (expected.currentSongId === null || AudioEngine.getCurrentAlbumId() !== expected.currentSetId ||
+      AudioEngine.getCurrentSongId() !== expected.currentSongId)) return;
   usePlayerStore.setState(stateUpdate);
-
   if (stateUpdate.currentTime !== undefined) {
-    const time = stateUpdate.currentTime;
-    const tracklist = usePlayerStore.getState().currentSet?.tracklist;
-    if (tracklist && tracklist.length > 0) {
-      // Binary search for active cue
-      let lo = 0, hi = tracklist.length - 1;
-      while (lo <= hi) {
-        const mid = Math.floor((lo + hi) / 2);
-        if (time < tracklist[mid].timeSec) hi = mid - 1;
-        else lo = mid + 1;
-      }
-      const newActiveCue = Math.max(0, lo - 1);
-      if (usePlayerStore.getState().activeCueIndex !== newActiveCue) {
-        usePlayerStore.setState({ activeCueIndex: newActiveCue });
-      }
-    }
+    const state = usePlayerStore.getState();
+    usePlayerStore.setState({ activeCueIndex: findActiveCueIndex(state.currentSet?.tracklist, state.currentTime) });
   }
 });

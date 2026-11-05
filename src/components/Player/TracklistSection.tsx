@@ -7,6 +7,7 @@ import type { TrackCue } from '../../types';
 import { ListMusic, ChevronDown, Loader2, AlertCircle, Music, RefreshCw, Plus, X, Play, Pause, Disc } from 'lucide-react';
 import { AudioEngine } from '../../engine/AudioEngine';
 import { formatTime } from '../../utils/format';
+import { buildShareUrl, shareLink } from '../../utils/shareLinks';
 import { authenticatedFetch } from '../../services/authService';
 
 const BASE = 'https://music.cyberspeeze.online';
@@ -63,11 +64,15 @@ export function TracklistSection({
   const [manualUrl, setManualUrl] = useState('');
   const [manualSubmitting, setManualSubmitting] = useState(false);
 
-  const currentSetId = usePlayerStore(s => s.currentSetId);
   const activeCueIndex = usePlayerStore(s => s.activeCueIndex);
   const currentTime = usePlayerStore(s => s.currentTime);
   const duration = usePlayerStore(s => s.duration);
   const currentSet = usePlayerStore(s => s.currentSet);
+  const currentSetId = currentSet?.id; // Discovery expects the album identity, never the engine song id.
+  const requestGeneration = useRef(0);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const manualRef = useRef<HTMLDivElement>(null);
+  const [shareMessage, setShareMessage] = useState('');
   const isPlaying = usePlayerStore(s => s.isPlaying);
   const status = usePlayerStore(s => s.status);
   const togglePlay = usePlayerStore(s => s.togglePlay);
@@ -98,24 +103,57 @@ export function TracklistSection({
     return () => cancelAnimationFrame(animId);
   }, [isOpen]);
 
-  // Fetch tracklist when set changes
-  useEffect(() => {
+  const fetchTracklist = useCallback(async () => {
     if (!currentSetId || !isOpen) return;
+    const generation = ++requestGeneration.current;
+    const isCurrent = () => generation === requestGeneration.current && usePlayerStore.getState().currentSet?.id === currentSetId;
     setLoading(true);
     setError(null);
-
-    getTracklist(currentSetId)
-      .then(data => {
-        const list = normalizeTracks(data);
-        setTracklist(list);
-        (usePlayerStore.getState() as any).setTracklistForSet?.(currentSetId, list);
-        setLoading(false);
-      })
-      .catch(() => {
-        setError('Tracklist niet beschikbaar');
-        setLoading(false);
-      });
+    try {
+      const data = await getTracklist(currentSetId);
+      if (!isCurrent()) return;
+      const list = normalizeTracks(data);
+      setTracklist(list);
+      usePlayerStore.getState().setTracklistForSet(currentSetId, list);
+    } catch {
+      if (isCurrent()) setError('Tracklist niet beschikbaar');
+    } finally {
+      if (isCurrent()) setLoading(false);
+    }
   }, [currentSetId, isOpen]);
+
+  useEffect(() => {
+    setTracklist([]);
+    setShowManualDialog(false);
+    setManualSubmitting(false);
+    setManualUrl('');
+    void fetchTracklist();
+    return () => { requestGeneration.current++; };
+  }, [fetchTracklist]);
+
+  useEffect(() => {
+    if (!isOpen && !showManualDialog) return;
+    const root = showManualDialog ? manualRef.current : sheetRef.current;
+    if (!root) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const items = () => Array.from(root.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input, [tabindex="0"]')).filter(el => el.getClientRects().length > 0);
+    (items()[0] || root).focus();
+    const keydown = (event: KeyboardEvent) => {
+      const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+      if (dialogs[dialogs.length - 1] !== root) return;
+      if (event.key === 'Escape') {
+        event.preventDefault(); event.stopImmediatePropagation();
+        if (showManualDialog) setShowManualDialog(false); else handleOpenChange(false);
+      } else if (event.key === 'Tab') {
+        const list = items(); const first = list[0], last = list[list.length - 1];
+        if (!first) { event.preventDefault(); root.focus(); }
+        else if (event.shiftKey && (document.activeElement === first || !root.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && (document.activeElement === last || !root.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+      }
+    };
+    document.addEventListener('keydown', keydown, true);
+    return () => { document.removeEventListener('keydown', keydown, true); previous?.focus(); };
+  }, [isOpen, showManualDialog, handleOpenChange]);
 
   // Auto-scroll naar actieve track (bij verandering van cue index)
   useEffect(() => {
@@ -135,7 +173,7 @@ export function TracklistSection({
     if (!listRef.current || activeCueIndex < 0) return;
     const children = listRef.current.children;
     if (children[activeCueIndex]) {
-      (children[activeCueIndex] as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center' });
+      (children[activeCueIndex] as HTMLElement).scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
     }
   }
 
@@ -158,39 +196,43 @@ export function TracklistSection({
   const handleManualSubmit = useCallback(async () => {
     const url = manualUrl.trim();
     if (!url || !currentSetId) return;
+    const generation = ++requestGeneration.current;
+    const isCurrent = () => generation === requestGeneration.current && usePlayerStore.getState().currentSet?.id === currentSetId;
     setManualSubmitting(true);
     try {
       const res = await authenticatedFetch(`${BASE}/api/tracklist/manual-map?tracklistUrl=${encodeURIComponent(url)}&albumName=${encodeURIComponent(currentSet?.title || '')}&artist=${encodeURIComponent(currentSet?.artist || '')}`, {
         method: 'POST',
       });
+      if (!isCurrent()) return;
       if (res.ok) {
         // Re-fetch tracklist
         setLoading(true);
         setError(null);
         const data = await getTracklist(currentSetId);
-        setTracklist(normalizeTracks(data));
+        if (!isCurrent()) return;
+        const list = normalizeTracks(data);
+        setTracklist(list);
+        usePlayerStore.getState().setTracklistForSet(currentSetId, list);
         setLoading(false);
       }
     } catch (e) {
       console.error('Manual map failed', e);
     }
+    if (!isCurrent()) return;
+    setLoading(false);
     setManualSubmitting(false);
     setShowManualDialog(false);
     setManualUrl('');
   }, [manualUrl, currentSetId, currentSet]);
 
   // ── Share track ──
-  const handleShare = useCallback((track: TrackCue) => {
-    const shareText = `🎵 Om ${formatTime(track.timeSec)} in ${currentSet?.title || 'Live Set'}\n${track.artist ? track.artist + ' - ' : ''}${track.title}\n🔗 https://music.cyberspeeze.online/go/set/${currentSetId}?t=${track.timeSec}\n#BeatmonkeyCrystal`;
-
-    if (navigator.share) {
-      navigator.share({ title: 'Deel Track', text: shareText });
-    } else {
-      navigator.clipboard.writeText(shareText).then(() => {
-        // Fallback: could show a toast
-      });
-    }
-  }, [currentSet, currentSetId]);
+  const handleShare = useCallback(async (track: TrackCue) => {
+    if (!currentSet) return;
+    try {
+      const result = await shareLink({ title: 'Deel Track', text: `${track.artist || ''} - ${track.title}`, url: buildShareUrl(currentSet, track.timeSec) });
+      setShareMessage(result === 'copied' ? 'Link gekopieerd.' : '');
+    } catch { setShareMessage('Delen is niet gelukt. Probeer opnieuw.'); }
+  }, [currentSet]);
 
   // ── Spotify search ──
   const handleSpotifySearch = useCallback((track: TrackCue) => {
@@ -229,7 +271,12 @@ export function TracklistSection({
 
           {/* Sheet */}
           <div
-            className="relative w-full max-h-[88vh] rounded-t-[28px] overflow-hidden animate-slide-up flex flex-col"
+            ref={sheetRef}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Tracklist"
+            className="safe-sheet relative w-full max-h-[88dvh] rounded-t-[28px] overflow-hidden animate-slide-up flex flex-col"
             style={{ backgroundColor: 'rgba(12, 18, 30, 0.98)' }}
           >
             {/* Neon glow achtergronden */}
@@ -289,12 +336,14 @@ export function TracklistSection({
 
                 <button
                   onClick={() => handleOpenChange(false)}
+                  aria-label="Sluit tracklist"
                   className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-white/8 hover:bg-white/15 transition-colors cursor-pointer"
                 >
                   <X size={18} className="text-white" />
                 </button>
               </div>
 
+              {shareMessage && <p role="status">{shareMessage}</p>}
               {/* ── CONTENT ── */}
               {loading && (
                 <div className="flex flex-col items-center justify-center py-12">
@@ -321,19 +370,7 @@ export function TracklistSection({
                   </p>
                   <div className="mt-5 flex gap-2">
                     <button
-                      onClick={() => {
-                        setLoading(true);
-                        setError(null);
-                        getTracklist(currentSetId!)
-                          .then(d => {
-                            setTracklist(normalizeTracks(d));
-                            setLoading(false);
-                          })
-                          .catch(() => {
-                            setError('Tracklist niet beschikbaar');
-                            setLoading(false);
-                          });
-                      }}
+                      onClick={() => { void fetchTracklist(); }}
                       className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold"
                       style={{ backgroundColor: '#00E5FF', color: '#0F172A' }}
                     >
@@ -544,15 +581,16 @@ export function TracklistSection({
       {showManualDialog && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50" onClick={() => { setShowManualDialog(false); setManualUrl(''); }} />
-          <div className="relative w-full max-w-sm rounded-xl p-5" style={{ backgroundColor: '#1E293B' }}>
+          <div ref={manualRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Tracklist toevoegen" className="relative w-full max-w-sm rounded-xl p-5" style={{ backgroundColor: '#1E293B' }}>
             <h3 className="text-base font-bold text-white mb-1">Tracklist toevoegen</h3>
             <p className="text-xs text-gray-400 mb-3">Voer een 1001Tracklists URL of pad in voor deze set:</p>
             <input
-              type="text"
+              type="url"
+              aria-label="1001Tracklists URL"
               value={manualUrl}
               onChange={(e) => setManualUrl(e.target.value)}
               placeholder="/tracklist/qz04ypk/..."
-              className="w-full px-3 py-2 rounded-lg text-sm text-white bg-transparent border outline-none transition-colors"
+              className="w-full px-3 py-2 rounded-lg text-base text-white bg-transparent border outline-none transition-colors"
               style={{
                 borderColor: manualUrl ? '#00E5FF' : 'rgba(255,255,255,0.3)',
               }}

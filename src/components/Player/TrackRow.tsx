@@ -25,29 +25,51 @@ export function TrackRow({
 }: TrackRowProps) {
   const [swipeOffset, setSwipeOffset] = useState(0);
   const touchStartX = useRef(0);
+  const touchStartY = useRef(0);
   const isDragging = useRef(false);
+  const direction = useRef<'pending' | 'horizontal' | 'vertical'>('pending');
+  const offsetRef = useRef(0);
+  const suppressClick = useRef(0);
   const SWIPE_THRESHOLD = 80;
 
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    touchStartX.current = e.touches[0].clientX;
-    isDragging.current = true;
+  const handleTouchCancel = useCallback(() => {
+    if (direction.current !== 'pending') suppressClick.current = Date.now() + 700;
+    isDragging.current = false;
+    direction.current = 'pending';
+    offsetRef.current = 0;
+    setSwipeOffset(0);
   }, []);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length !== 1) { handleTouchCancel(); return; }
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+    direction.current = 'pending';
+    offsetRef.current = 0;
+    isDragging.current = true;
+  }, [handleTouchCancel]);
 
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
-    if (!isDragging.current) return;
-    const diff = e.touches[0].clientX - touchStartX.current;
-    setSwipeOffset(Math.max(-150, Math.min(150, diff)));
-  }, []);
+    if (!isDragging.current || e.touches.length !== 1) { handleTouchCancel(); return; }
+    const dx = e.touches[0].clientX - touchStartX.current;
+    const dy = e.touches[0].clientY - touchStartY.current;
+    if (direction.current === 'pending' && Math.max(Math.abs(dx), Math.abs(dy)) > 10) {
+      direction.current = Math.abs(dx) > Math.abs(dy) * 1.25 ? 'horizontal' : 'vertical';
+      suppressClick.current = Date.now() + 700;
+    }
+    if (direction.current !== 'horizontal') return;
+    offsetRef.current = Math.max(-150, Math.min(150, dx));
+    setSwipeOffset(offsetRef.current);
+  }, [handleTouchCancel]);
 
   const handleTouchEnd = useCallback(() => {
-    isDragging.current = false;
-    if (swipeOffset < -SWIPE_THRESHOLD && onShare) {
-      onShare();
-    } else if (swipeOffset > SWIPE_THRESHOLD && onSpotifySearch) {
-      onSpotifySearch();
+    if (direction.current === 'horizontal') {
+      suppressClick.current = Date.now() + 700;
+      if (offsetRef.current < -SWIPE_THRESHOLD) onShare?.();
+      else if (offsetRef.current > SWIPE_THRESHOLD) onSpotifySearch?.();
     }
-    setSwipeOffset(0);
-  }, [swipeOffset, onShare, onSpotifySearch]);
+    handleTouchCancel();
+  }, [onShare, onSpotifySearch, handleTouchCancel]);
 
   return (
     <div className="relative overflow-hidden rounded-lg select-none">
@@ -65,7 +87,10 @@ export function TrackRow({
       </div>
 
       <div
-        onClick={onSeek}
+        onClick={(e) => {
+          if (e.detail !== 0 && Date.now() < suppressClick.current) { e.preventDefault(); e.stopPropagation(); return; }
+          onSeek();
+        }}
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {
@@ -74,14 +99,16 @@ export function TrackRow({
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchCancel}
         className={`relative flex items-center gap-2 py-2 px-3 rounded-lg cursor-pointer transition-[transform,colors] duration-200 select-none ${
           isActive
             ? 'bg-[#132036] border border-[var(--color-crystal-cyan)]'
             : 'bg-[#0F172A] border border-white/5 hover:bg-[#0F172A]/80'
         }`}
         style={{
+          touchAction: 'pan-y',
           transform: `translateX(${swipeOffset}px)`,
-          transition: isDragging.current ? 'none' : 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
+          transition: swipeOffset !== 0 ? 'none' : 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
         }}
       >
         <div

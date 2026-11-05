@@ -1,19 +1,13 @@
 import { Settings, User, LogOut, Server } from 'lucide-react';
 import { getServerUrl, getCredentials } from '../services/subsonic';
-import { clearSubsonicCredentials } from '../services/authService';
+import { useAuthStore } from '../stores/useAuthStore';
 import { UserProfile } from '../components/Auth/UserProfile';
 
 export function SettingsPage() {
   const server = getServerUrl();
   const { user } = getCredentials();
 
-  const handleLogout = async () => {
-    await clearSubsonicCredentials();
-    localStorage.removeItem('bm_user');
-    localStorage.removeItem('bm_pass');
-    localStorage.removeItem('bm_server');
-    window.location.reload();
-  };
+  const handleLogout = useAuthStore((s) => s.logout);
 
   return (
     <div className="p-4 sm:p-6 max-w-4xl mx-auto space-y-6">

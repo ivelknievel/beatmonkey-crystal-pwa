@@ -5,36 +5,26 @@ import { usePlayerStore } from '../stores/playerStore';
 import type { SetInfo } from '../types';
 import { SetCard } from '../components/Favorites/SetCard';
 import { getStarred } from '../services/subsonic';
+import { useAuthStore } from '../stores/useAuthStore';
 
 export function FavoritesPage() {
   const navigate = useNavigate();
   const likedSetIds = usePlayerStore((s) => s.likedSetIds);
   const recentSets = usePlayerStore((s) => s.recentSets);
   const festivals = usePlayerStore((s) => s.festivals);
-  const [starredSets, setStarredSets] = useState<SetInfo[]>([]);
+  const [starredResult, setStarredResult] = useState<{ scope: string | null; sets: SetInfo[] } | null>(null);
 
+  const accountScope = useAuthStore((s) => s.accountScope);
+  const starredSets = useMemo(() => starredResult?.scope === accountScope ? starredResult.sets : [], [starredResult, accountScope]);
   useEffect(() => {
     let mounted = true;
-    getStarred().then((sets) => {
-      if (mounted && sets) {
-        setStarredSets(sets);
-        if (sets.length > 0) {
-          const ids = sets.map((s) => s.id);
-          const current = usePlayerStore.getState().likedSetIds;
-          const merged = Array.from(new Set([...current, ...ids]));
-          usePlayerStore.setState({ likedSetIds: merged });
-          try {
-            localStorage.setItem('beatmonkey_liked_sets', JSON.stringify(merged));
-          } catch {
-            /* silent */
-          }
-        }
-      }
+    // The account-scoped player action is the sole owner of favourite IDs.
+    void usePlayerStore.getState().syncLikedSets().catch(() => {});
+    getStarred().then((sets) => { if (mounted) setStarredResult({ scope: accountScope, sets }); }).catch(() => {
+      // A failed fetch is not a successful empty list; retain player cache.
     });
-    return () => {
-      mounted = false;
-    };
-  }, []);
+    return () => { mounted = false; };
+  }, [accountScope]);
 
   // Pool all known sets
   const favoriteSets = useMemo(() => {

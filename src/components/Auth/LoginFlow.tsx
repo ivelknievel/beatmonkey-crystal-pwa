@@ -1,61 +1,24 @@
-import { useState, useEffect } from 'react';
-import { setCredentials, setServerUrl, ping } from '../../services/subsonic';
-import { saveSubsonicCredentials } from '../../services/authService';
-import { AudioEngine } from '../../engine/AudioEngine';
-import { usePlayerStore } from '../../stores/playerStore';
+import { useState } from 'react';
 import { Music, Loader2, AlertCircle } from 'lucide-react';
 import { GoogleLoginButton } from './GoogleLoginButton';
 import { useAuthStore } from '../../stores/useAuthStore';
 
-export function LoginFlow({ onLogin }: { onLogin: () => void }) {
+export function LoginFlow() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loginSuccess = useAuthStore((s) => s.isAuthenticated);
-  const checkGoogleSession = useAuthStore((s) => s.checkSession);
-
-  useEffect(() => {
-    checkGoogleSession();
-  }, [checkGoogleSession]);
-
-  useEffect(() => {
-    if (loginSuccess) {
-      AudioEngine.init();
-      usePlayerStore.getState().setStatus('idle');
-      usePlayerStore.getState().syncLikedSets();
-      usePlayerStore.getState().restoreLastPosition();
-      onLogin();
-    }
-  }, [loginSuccess, onLogin]);
-
+  const loginManual = useAuthStore((s) => s.loginManual);
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
-
-    setServerUrl('https://music.cyberspeeze.online/rest');
-    setCredentials(username, password);
-
     try {
-      const ok = await ping();
-      if (ok) {
-        await saveSubsonicCredentials(username, password);
-
-        AudioEngine.init();
-        usePlayerStore.getState().setStatus('idle');
-        usePlayerStore.getState().syncLikedSets();
-        usePlayerStore.getState().restoreLastPosition();
-        onLogin();
-      } else {
-        setError('Verkeerde gebruikersnaam of wachtwoord');
+      if (!await loginManual(username, password)) {
+        setError(useAuthStore.getState().error || 'Inloggen mislukt');
       }
-    } catch (err) {
-      setError('Kan geen verbinding maken: ' + (err instanceof Error ? err.message : 'onbekende fout'));
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
   return (
@@ -71,28 +34,36 @@ export function LoginFlow({ onLogin }: { onLogin: () => void }) {
         </div>
 
         {/* Login form */}
-        <form onSubmit={handleLogin} className="space-y-4" autoComplete="off">
+        <form onSubmit={handleLogin} className="space-y-4">
           <div>
-            <label className="text-xs text-gray-400 mb-1.5 block">Gebruikersnaam</label>
+            <label htmlFor="username" className="text-xs text-gray-400 mb-1.5 block">Gebruikersnaam</label>
             <input
+              id="username"
+              name="username"
               type="text"
+              autoCapitalize="none"
+              spellCheck={false}
+              required
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full bg-[#12121f] border border-[#2a2a3e] rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-crystal-cyan transition-colors"
+              className="w-full bg-[#12121f] border border-[#2a2a3e] rounded-xl px-4 py-3 text-white text-base focus:outline-none focus:border-crystal-cyan transition-colors"
               placeholder="Gebruikersnaam"
-              autoComplete="off"
+              autoComplete="username"
             />
           </div>
 
           <div>
-            <label className="text-xs text-gray-400 mb-1.5 block">Wachtwoord</label>
+            <label htmlFor="password" className="text-xs text-gray-400 mb-1.5 block">Wachtwoord</label>
             <input
+              id="password"
+              name="password"
               type="password"
+              required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full bg-[#12121f] border border-[#2a2a3e] rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-crystal-cyan transition-colors"
+              className="w-full bg-[#12121f] border border-[#2a2a3e] rounded-xl px-4 py-3 text-white text-base focus:outline-none focus:border-crystal-cyan transition-colors"
               placeholder="••••••••"
-              autoComplete="new-password"
+              autoComplete="current-password"
             />
           </div>
 

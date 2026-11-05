@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { buildShareUrl, shareLink } from '../../utils/shareLinks';
 import { ChevronDown, ListPlus, Disc3, Sparkles, Share2 } from 'lucide-react';
 import { usePlayerStore } from '../../stores/playerStore';
 import { getCoverUrl } from '../../services/subsonic';
@@ -12,6 +13,11 @@ import { AudioEngine } from '../../engine/AudioEngine';
 
 export function FullscreenPlayerOverlay() {
   const [isQueueOpen, setIsQueueOpen] = useState(false);
+  const [shareMessage, setShareMessage] = useState('');
+  const [visualizationEnabled, setVisualizationEnabled] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const shareDialogRef = useRef<HTMLDivElement>(null);
+  const queueDialogRef = useRef<HTMLDivElement>(null);
   const [isClosing, setIsClosing] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
@@ -34,8 +40,29 @@ export function FullscreenPlayerOverlay() {
     setIsClosing(true);
     setTimeout(() => {
       setFullscreen(false);
-    }, 300);
+    }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 300);
   }, [setFullscreen]);
+
+  // Focus entry/return and Tab containment for the active player/share dialog.
+  useEffect(() => {
+    const root = isQueueOpen ? queueDialogRef.current : isShareDialogOpen ? shareDialogRef.current : dialogRef.current;
+    if (!root) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const focusable = () => Array.from(root.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input, [tabindex="0"]')).filter(el => el.getClientRects().length > 0);
+    (focusable()[0] || root).focus();
+    const trap = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+      if (dialogs[dialogs.length - 1] !== root) return;
+      const items = focusable();
+      if (!items.length) { event.preventDefault(); root.focus(); return; }
+      const first = items[0], last = items[items.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !root.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && (document.activeElement === last || !root.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', trap);
+    return () => { document.removeEventListener('keydown', trap); previous?.focus(); };
+  }, [isShareDialogOpen, isQueueOpen]);
 
   // Handle ESC key to close overlay
   useEffect(() => {
@@ -78,28 +105,25 @@ export function FullscreenPlayerOverlay() {
   };
 
   // Share handler
-  const handleShare = (fromCurrent: boolean) => {
-    const currentTime = AudioEngine.getCurrentTime();
-    const timeStr = formatTime(currentTime);
-    const currentSecs = Math.floor(currentTime);
-    const setId = currentSet?.id || '';
-    const shareText = fromCurrent
-      ? `Luister naar ${title} van ${artist} op Beatmonkey Crystal vanaf ${timeStr}!\n\nhttps://music.cyberspeeze.online/go/album/${setId}?t=${currentSecs}`
-      : `Luister naar ${title} van ${artist} op Beatmonkey Crystal!\n\nhttps://music.cyberspeeze.online/go/album/${setId}`;
-
-    if (navigator.share) {
-      navigator.share({ title: 'Deel Liveset', text: shareText });
-    } else {
-      navigator.clipboard.writeText(shareText).then(() => {
-        alert('📋 Link gekopieerd naar klembord!');
+  const handleShare = async (fromCurrent: boolean) => {
+    if (!currentSet) return;
+    try {
+      const result = await shareLink({ title: 'Deel Liveset',
+        text: `Luister naar ${title} van ${artist} op Beatmonkey Crystal!`,
+        url: buildShareUrl(currentSet, fromCurrent ? AudioEngine.getCurrentTime() : 0),
       });
+      setShareMessage(result === 'copied' ? 'Link gekopieerd.' : '');
+      setIsShareDialogOpen(false);
+    } catch {
+      setShareMessage('Delen is niet gelukt. Probeer opnieuw.');
     }
-    setIsShareDialogOpen(false);
   };
 
   return (
     <div
-      className={`fixed inset-0 z-50 bg-[#0a0a0f] text-white flex flex-col overflow-hidden transition-transform duration-300 ease-out safe-top safe-bottom ${
+      ref={dialogRef}
+      tabIndex={-1}
+      className={`fixed inset-0 z-50 bg-[#0a0a0f] text-white flex flex-col overflow-hidden transition-transform duration-300 ease-out safe-top safe-bottom safe-sides ${
         isVisible ? 'translate-y-0' : 'translate-y-full'
       }`}
       role="dialog"
@@ -125,6 +149,11 @@ export function FullscreenPlayerOverlay() {
           onClick={() => setIsShareDialogOpen(false)}
         >
           <div
+            ref={shareDialogRef}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Liveset delen"
             className="bg-[#141C2E] rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl border border-white/10"
             onClick={(e) => e.stopPropagation()}
           >
@@ -205,6 +234,8 @@ export function FullscreenPlayerOverlay() {
           </div>
         </header>
 
+        {shareMessage && <p className="px-6" role="status">{shareMessage}</p>}
+
         {/* <ArtworkStage> */}
         <div className="flex-1 flex flex-col items-center justify-center px-6 my-auto min-h-[260px] max-h-[360px]">
           <div className="relative group">
@@ -269,7 +300,11 @@ export function FullscreenPlayerOverlay() {
 
         {/* <Visualizer> */}
         <div className="px-6 my-2 max-w-lg mx-auto w-full flex justify-center">
-          <Visualizer engine={AudioEngine} isPlaying={status === 'playing'} />
+          {!visualizationEnabled && <button type="button" className="text-xs py-2" onClick={() => {
+            // Explicit experimental opt-in; never disconnect the media source later.
+            if (AudioEngine.ensureAudioContext()) setVisualizationEnabled(true);
+          }}>Visualisatie inschakelen (experimenteel)</button>}
+          <Visualizer engine={AudioEngine} isPlaying={status === 'playing'} enabled={visualizationEnabled} />
         </div>
 
         {/* <Scrubber> */}
@@ -285,10 +320,9 @@ export function FullscreenPlayerOverlay() {
       </div>
 
       {/* <QueueSheet> */}
-      <QueueSheet
-        isOpen={isQueueOpen}
-        onClose={() => setIsQueueOpen(false)}
-      />
+      {isQueueOpen && <div ref={queueDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Afspeelwachtrij" className="queue-focus-scope">
+        <QueueSheet isOpen={true} onClose={() => setIsQueueOpen(false)} />
+      </div>}
     </div>
   );
 }

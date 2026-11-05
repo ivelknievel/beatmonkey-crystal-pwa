@@ -54,7 +54,8 @@ function md5(string: string): string {
 
   function convertToWordArray(str: string) {
     let lWordCount;
-    const lMessageLength = str.length;
+    const bytes = new TextEncoder().encode(str);
+    const lMessageLength = bytes.length;
     const lNumberOfWordsTempOne = lMessageLength + 8;
     const lNumberOfWordsTempTwo = (lNumberOfWordsTempOne - (lNumberOfWordsTempOne % 64)) / 64;
     const lNumberOfWords = (lNumberOfWordsTempTwo + 1) * 16;
@@ -64,7 +65,7 @@ function md5(string: string): string {
     while (lByteCount < lMessageLength) {
       lWordCount = (lByteCount - (lByteCount % 4)) / 4;
       lBytePosition = (lByteCount % 4) * 8;
-      lWordArray[lWordCount] = (lWordArray[lWordCount] | (str.charCodeAt(lByteCount) << lBytePosition));
+      lWordArray[lWordCount] = (lWordArray[lWordCount] | (bytes[lByteCount] << lBytePosition));
       lByteCount++;
     }
     lWordCount = (lByteCount - (lByteCount % 4)) / 4;
@@ -169,9 +170,13 @@ function md5(string: string): string {
   return (wordToHex(a) + wordToHex(b) + wordToHex(c) + wordToHex(d)).toLowerCase();
 }
 
-let BASE = (typeof localStorage !== 'undefined' && localStorage.getItem('bm_server')) || 'https://music.cyberspeeze.online/rest';
-let _user = (typeof localStorage !== 'undefined' && localStorage.getItem('bm_user')) || '';
-let _pass = (typeof localStorage !== 'undefined' && localStorage.getItem('bm_pass')) || '';
+function safeStored(key: string): string | null {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+let BASE = safeStored('bm_server') || 'https://music.cyberspeeze.online/rest';
+// Credentials are only activated by the authoritative auth store.
+let _user = '';
+let _pass = '';
 
 export function setServerUrl(url: string) {
   BASE = url.replace(/\/+$/, '');
@@ -185,7 +190,6 @@ export function getServerUrl(): string {
 }
 
 export function setCredentials(user: string, pass: string) {
-  console.log(`[Subsonic] setCredentials called with user: ${user}`);
   _user = user;
   _pass = pass;
 }
@@ -194,10 +198,10 @@ export function getCredentials() {
   return { user: _user, pass: _pass };
 }
 
-export function getAuthParams(): string {
+export function getAuthParams(user = _user, pass = _pass): string {
   const salt = Math.random().toString(36).substring(2, 12);
-  const token = md5(_pass + salt);
-  return `u=${encodeURIComponent(_user)}&t=${token}&s=${salt}&v=1.16.1&c=beatmonkey-pwa&f=json`;
+  const token = md5(pass + salt);
+  return `u=${encodeURIComponent(user)}&t=${token}&s=${salt}&v=1.16.1&c=beatmonkey-pwa&f=json`;
 }
 
 async function request<T = any>(method: string, params: Record<string, any> = {}): Promise<T> {
@@ -212,15 +216,49 @@ async function request<T = any>(method: string, params: Record<string, any> = {}
   if (!res.ok) {
     throw new Error(`HTTP error ${res.status}: ${res.statusText}`);
   }
+  return validateResponse<T>(res);
+}
+
+export class SubsonicError extends Error {
+  readonly code?: number;
+  readonly httpStatus?: number;
+
+  constructor(message: string, code?: number, httpStatus?: number) {
+    super(message);
+    this.name = 'SubsonicError';
+    this.code = code;
+    this.httpStatus = httpStatus;
+  }
+
+  get authenticationRejected(): boolean {
+    // 403 can mean endpoint permission/configuration, not invalid credentials.
+    return this.code === 40 || this.code === 41 || this.httpStatus === 401;
+  }
+}
+
+async function validateResponse<T = any>(res: Response): Promise<T> {
+  if (!res.ok) throw new SubsonicError(`HTTP error ${res.status}`, undefined, res.status);
   const data = await res.json();
-  const subsonicResponse = data['subsonic-response'];
-  if (!subsonicResponse) {
-    throw new Error('Invalid Subsonic API response');
+  const subsonicResponse = data?.['subsonic-response'];
+  if (!subsonicResponse || !['ok', 'failed'].includes(subsonicResponse.status)) {
+    throw new SubsonicError('Invalid Subsonic API response');
   }
   if (subsonicResponse.status !== 'ok') {
-    throw new Error(subsonicResponse.error?.message || 'Subsonic API error');
+    throw new SubsonicError(subsonicResponse.error?.message || 'Subsonic API error', subsonicResponse.error?.code);
   }
   return subsonicResponse as T;
+}
+
+// False means definite rejection; transport/server/invalid-response failures throw.
+// Validate candidates without exposing them to the active player's network calls.
+export async function validateCredentials(user: string, pass: string): Promise<boolean> {
+  try {
+    await validateResponse(await fetch(`${BASE}/ping.view?${getAuthParams(user, pass)}`));
+    return true;
+  } catch (error) {
+    if (error instanceof SubsonicError && error.authenticationRejected) return false;
+    throw error;
+  }
 }
 
 export async function ping(): Promise<boolean> {
@@ -284,14 +322,7 @@ export function getCoverUrl(id?: string | null, size: number = 300): string {
 }
 
 export async function getStarred(): Promise<SetInfo[]> {
-  try {
-    const auth = getAuthParams();
-    const url = `${BASE}/getStarred2?${auth}&v=1.16.1&c=beatmonkey-pwa`;
-    const res = await fetch(url);
-    if (!res.ok) return [];
-    const data = await res.json();
-    const resp = data['subsonic-response'];
-    if (!resp || resp.status !== 'ok') return [];
+    const resp = await request('getStarred2');
     
     const starred = resp.starred2 || resp.starred || {};
     const albums = starred.album || [];
@@ -330,17 +361,12 @@ export async function getStarred(): Promise<SetInfo[]> {
     }
     
     return all;
-  } catch {
-    return [];
-  }
 }
 
 export async function starAlbum(albumId: string): Promise<boolean> {
   try {
-    const auth = getAuthParams();
-    const url = `${BASE}/star?${auth}&albumId=${encodeURIComponent(albumId)}&v=1.16.1&c=beatmonkey-pwa`;
-    const res = await fetch(url);
-    return res.ok;
+    await request('star', { albumId });
+    return true;
   } catch {
     return false;
   }
@@ -348,10 +374,8 @@ export async function starAlbum(albumId: string): Promise<boolean> {
 
 export async function unstarAlbum(albumId: string): Promise<boolean> {
   try {
-    const auth = getAuthParams();
-    const url = `${BASE}/unstar?${auth}&albumId=${encodeURIComponent(albumId)}&v=1.16.1&c=beatmonkey-pwa`;
-    const res = await fetch(url);
-    return res.ok;
+    await request('unstar', { albumId });
+    return true;
   } catch {
     return false;
   }
@@ -382,13 +406,9 @@ export async function getPlayQueue(): Promise<{ songId: string; position: number
 // Sla de playback positie op naar de server
 export async function savePlayQueue(songId: string, positionMs: number, albumId?: string): Promise<boolean> {
   try {
-    const auth = getAuthParams();
-    let url = `${BASE}/savePlayQueue?${auth}&id=${encodeURIComponent(songId)}&current=${encodeURIComponent(songId)}&position=${Math.round(positionMs)}`;
-    if (albumId) {
-      url += `&albumId=${encodeURIComponent(albumId)}`;
-    }
-    const res = await fetch(url);
-    return res.ok;
+    if (!songId || !Number.isFinite(positionMs) || positionMs < 0) return false;
+    await request('savePlayQueue', { id: songId, current: songId, position: Math.round(positionMs), albumId });
+    return true;
   } catch {
     return false;
   }

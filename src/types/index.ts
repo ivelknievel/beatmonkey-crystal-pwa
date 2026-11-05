@@ -1,7 +1,9 @@
-export type PlayerStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
+export type PlayerStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'blocked' | 'error';
 
 export interface SetInfo {
   id: string;
+  /** Explicit stream/song identity; id remains the album identity. */
+  songId?: string;
   title: string;
   artist: string;
   coverArt: string;
@@ -27,6 +29,7 @@ export interface TrackCue {
 export interface AudioState {
   status: PlayerStatus;
   currentSetId: string | null;
+  currentSongId?: string | null;
   currentSet: SetInfo | null;
   currentTime: number;
   duration: number;

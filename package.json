@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/generate-service-worker.mjs dist",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
+    "test:unit": "node --test --test-concurrency=1 tests/unit/*.test.mjs",
+    "test:browser": "playwright test",
     "lint": "oxlint",
     "preview": "vite preview"
   },

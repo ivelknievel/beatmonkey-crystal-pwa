@@ -5,10 +5,25 @@ type StateChangeCallback = (state: Partial<AudioState>) => void;
 
 let audio: HTMLAudioElement | null = null;
 let initialized = false;
-let pendingStartTime = 0;
+let pendingStartTime: number | null = null;
 let currentSongId: string | null = null;
 let currentAlbumId: string | null = null;
 let lastSaveTimestamp = 0;
+let generation = 0;
+let accountGeneration = 0;
+let playAttempt = 0;
+let suppressEvents = false;
+let playbackStatus: AudioState['status'] = 'idle';
+type SaveSnapshot = { generation: number; accountGeneration: number; songId: string; albumId: string | null; position: number; key: string };
+let pendingSave: SaveSnapshot | null = null;
+let inFlightSave: SaveSnapshot | null = null;
+let saveWorker: Promise<void> | null = null;
+let lastSavedKey: string | null = null;
+function clampTime(time: number, duration = audio && Number.isFinite(audio.duration) && audio.duration > 0
+  ? audio.duration : currentSetMetadata?.duration): number {
+  if (!Number.isFinite(time)) return 0;
+  return Math.min(Math.max(0, time), duration && Number.isFinite(duration) && duration > 0 ? duration : Infinity);
+}
 let currentSetMetadata: Partial<SetInfo> | null = null;
 const listeners = new Set<StateChangeCallback>();
 
@@ -80,17 +95,47 @@ function stopVisualization(): void {
   }
 }
 
-export async function savePlaybackPosition(): Promise<void> {
-  if (!audio || !currentSongId) return;
-  if (currentSongId.startsWith('http://') || currentSongId.startsWith('https://')) return;
-  const pos = audio.currentTime || 0;
-  if (pos < 10) return; // alleen posities > 10s
-  const albumId = currentAlbumId || '';
-  await savePlayQueue(currentSongId, pos * 1000, albumId || undefined);
-  lastSaveTimestamp = Date.now();
+export function savePlaybackPosition(): Promise<void> {
+  if (!audio || !currentSongId || /^https?:\/\//.test(currentSongId)) return Promise.resolve();
+  const pos = clampTime(audio.currentTime);
+  if (pos < 10) return Promise.resolve();
+  const key = `${generation}:${currentSongId}:${pos}`;
+  if (key === lastSavedKey || key === inFlightSave?.key || key === pendingSave?.key) return saveWorker || Promise.resolve();
+  pendingSave = { generation, accountGeneration, songId: currentSongId, albumId: currentAlbumId, position: pos * 1000, key };
+  if (!saveWorker) {
+    // Defer one microtask so concurrent requests share a single serialized worker.
+    saveWorker = Promise.resolve().then(async () => {
+      try {
+        while (pendingSave) {
+          const snapshot = pendingSave;
+          pendingSave = null;
+          if (snapshot.accountGeneration !== accountGeneration) continue;
+          inFlightSave = snapshot;
+          try {
+            const result = await savePlayQueue(snapshot.songId, snapshot.position, snapshot.albumId || undefined);
+            if (result !== false && snapshot.generation === generation) {
+              lastSaveTimestamp = Date.now();
+              lastSavedKey = snapshot.key;
+            }
+          } catch { /* Failed saves remain retryable; no unhandled event rejection. */ }
+          finally { inFlightSave = null; }
+        }
+      } finally {
+        // Clear synchronously with the final queue check (no .finally microtask gap).
+        saveWorker = null;
+      }
+    });
+  }
+  return saveWorker;
 }
 
 function emitState(partial: Partial<AudioState>) {
+  if (partial.status) {
+    playbackStatus = partial.status;
+    if ('mediaSession' in navigator) {
+      try { navigator.mediaSession.playbackState = partial.status === 'playing' ? 'playing' : currentSongId ? 'paused' : 'none'; } catch { /* optional */ }
+    }
+  }
   listeners.forEach((cb) => {
     try {
       cb(partial);
@@ -120,25 +165,28 @@ function updatePositionState() {
 function setupMediaSession() {
   if (!('mediaSession' in navigator)) return;
 
-  navigator.mediaSession.setActionHandler('play', () => {
+  const register = (action: MediaSessionAction, handler: MediaSessionActionHandler) => {
+    try { navigator.mediaSession.setActionHandler(action, handler); } catch { /* unsupported action */ }
+  };
+  register('play', () => {
     AudioEngine.play();
   });
 
-  navigator.mediaSession.setActionHandler('pause', () => {
+  register('pause', () => {
     AudioEngine.pause();
   });
 
-  navigator.mediaSession.setActionHandler('seekforward', (details) => {
+  register('seekforward', (details) => {
     const offset = details.seekOffset || 15;
     AudioEngine.skipForward(offset);
   });
 
-  navigator.mediaSession.setActionHandler('seekbackward', (details) => {
+  register('seekbackward', (details) => {
     const offset = details.seekOffset || 15;
     AudioEngine.skipBack(offset);
   });
 
-  navigator.mediaSession.setActionHandler('seekto', (details) => {
+  register('seekto', (details) => {
     if (details.seekTime != null) {
       AudioEngine.seek(details.seekTime);
     }
@@ -146,7 +194,7 @@ function setupMediaSession() {
 }
 
 function updateMediaSessionMetadata(meta: Partial<SetInfo>) {
-  if (!('mediaSession' in navigator)) return;
+  if (!('mediaSession' in navigator) || typeof MediaMetadata === 'undefined') return;
   currentSetMetadata = { ...currentSetMetadata, ...meta };
 
   const artworkList: MediaImage[] = [];
@@ -172,8 +220,10 @@ function updateMediaSessionMetadata(meta: Partial<SetInfo>) {
 
 // Audio Event Handlers
 function onPlay() {
+  if (suppressEvents || !currentSongId || !audio || audio.paused) return;
   emitState({
     status: 'playing',
+    error: null,
     isPlaying: true,
     currentTime: audio ? audio.currentTime : 0,
   });
@@ -181,6 +231,7 @@ function onPlay() {
 }
 
 function onPause() {
+  if (suppressEvents || !currentSongId || !audio?.paused) return;
   savePlaybackPosition();
   emitState({
     status: 'paused',
@@ -191,12 +242,14 @@ function onPause() {
 }
 
 function onWaiting() {
+  if (suppressEvents || !currentSongId || playbackStatus === 'blocked') return;
   emitState({
     status: 'loading',
   });
 }
 
 function onCanPlay() {
+  if (suppressEvents || !currentSongId || playbackStatus === 'blocked') return;
   if (audio && audio.paused) {
     emitState({ status: 'paused' });
   } else if (audio && !audio.paused) {
@@ -206,11 +259,10 @@ function onCanPlay() {
 
 function onLoadedMetadata() {
   if (!audio) return;
-  const duration = isNaN(audio.duration) ? 0 : audio.duration;
-  if (pendingStartTime > 0 && (!duration || pendingStartTime < duration)) {
-    audio.currentTime = pendingStartTime;
-    pendingStartTime = 0;
-  }
+  if (suppressEvents || !currentSongId) return;
+  const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+  if (pendingStartTime !== null) audio.currentTime = clampTime(pendingStartTime);
+  pendingStartTime = null;
   emitState({
     duration,
     currentTime: audio.currentTime,
@@ -219,7 +271,7 @@ function onLoadedMetadata() {
 }
 
 function onSeeked() {
-  if (!audio) return;
+  if (!audio || !currentSongId || suppressEvents) return;
   emitState({
     currentTime: audio.currentTime,
   });
@@ -227,7 +279,7 @@ function onSeeked() {
 }
 
 function onTimeUpdate() {
-  if (!audio) return;
+  if (!audio || !currentSongId || suppressEvents) return;
   const now = Date.now();
   if (now - lastSaveTimestamp >= 30000) {
     savePlaybackPosition();
@@ -239,6 +291,7 @@ function onTimeUpdate() {
 }
 
 function onEnded() {
+  if (!currentSongId || suppressEvents) return;
   savePlaybackPosition();
   emitState({
     status: 'paused',
@@ -249,6 +302,7 @@ function onEnded() {
 }
 
 function onError() {
+  if (!currentSongId || suppressEvents) return;
   const errMsg = audio?.error ? `Audio playback error (${audio.error.code}): ${audio.error.message}` : 'Audio playback error';
   emitState({
     status: 'error',
@@ -304,65 +358,50 @@ export const AudioEngine = {
     initialized = true;
   },
 
-  loadSet(idOrUrl: string, startTime = 0, metadata?: Partial<SetInfo>) {
-    if (!audio) {
-      AudioEngine.init();
-    }
-    if (!audio) return;
-
-    if (currentSongId && currentSongId !== idOrUrl && audio.currentTime > 0) {
-      savePlaybackPosition();
-    }
+  loadSet(idOrUrl: string, startTime = 0, metadata?: Partial<SetInfo>, autoplay = true) {
+    if (!audio) AudioEngine.init();
+    if (!audio) return Promise.resolve();
+    if (currentSongId && currentSongId !== idOrUrl) void savePlaybackPosition();
+    generation++;
+    playAttempt++;
+    suppressEvents = true;
+    audio.pause();
+    suppressEvents = false;
     currentSongId = idOrUrl;
     currentAlbumId = metadata?.id || null;
+    currentSetMetadata = metadata || null;
     lastSaveTimestamp = Date.now();
-
-    const streamUrl = idOrUrl.startsWith('http://') || idOrUrl.startsWith('https://')
-      ? idOrUrl
-      : getStreamUrl(idOrUrl);
-
-    pendingStartTime = startTime;
-    audio.src = streamUrl;
+    lastSavedKey = null;
+    pendingStartTime = clampTime(startTime, metadata?.duration || 0);
+    audio.src = /^https?:\/\//.test(idOrUrl) ? idOrUrl : getStreamUrl(idOrUrl);
     audio.load();
-
-    if (metadata) {
-      updateMediaSessionMetadata(metadata);
-    }
-
-    emitState({
-      status: 'loading',
-      currentSetId: idOrUrl,
-      currentTime: startTime,
-      error: null,
-    });
-
-    const playPromise = audio.play();
-    if (playPromise !== undefined) {
-      playPromise.catch((err) => {
-        // Autoplay may be blocked by browser policy until user gesture
-        console.warn('Audio play was interrupted or requires user interaction:', err);
-      });
-    }
+    if (metadata) updateMediaSessionMetadata(metadata);
+    emitState({ status: autoplay ? 'loading' : 'paused', isPlaying: false,
+      currentSetId: currentAlbumId, currentSongId, currentTime: pendingStartTime, error: null });
+    return autoplay ? AudioEngine.play() : Promise.resolve();
   },
 
   async play() {
-    ensureAudioContext();
-    startVisualization();
-    if (audioContext && audioContext.state === 'suspended') {
-      audioContext.resume().catch(() => {});
-    }
-    if (!audio) return;
+    if (!audio || !currentSongId) return;
+    const selected = generation;
+    const attempt = ++playAttempt;
+    // HTML media is the baseline. Only an explicit analyser request opts in to Web Audio.
+    if (audioContext?.state === 'suspended') void audioContext.resume().catch(() => {});
     try {
       await audio.play();
-    } catch (err: any) {
-      console.warn('AudioEngine play error:', err);
-      emitState({ error: err?.message || 'Playback error' });
+      if (selected !== generation || attempt !== playAttempt) return;
+      emitState({ status: 'playing', isPlaying: true, error: null });
+      startVisualization();
+    } catch (err) {
+      if (selected !== generation || attempt !== playAttempt) return;
+      const error = err instanceof Error ? err : new Error(String(err));
+      emitState({ status: error.name === 'NotAllowedError' ? 'blocked' : 'error', isPlaying: false, error: error.message });
     }
   },
 
   pause() {
+    playAttempt++;
     stopVisualization();
-    savePlaybackPosition();
     if (!audio) return;
     audio.pause();
   },
@@ -377,13 +416,12 @@ export const AudioEngine = {
   },
 
   seek(time: number) {
-    if (!audio) return;
-    const targetTime = Math.max(0, time);
+    if (!audio || !currentSongId) return;
+    const targetTime = clampTime(time);
     pendingStartTime = targetTime;
     if (audio.readyState >= 1) {
-      const duration = isNaN(audio.duration) ? 0 : audio.duration;
-      const clamped = duration > 0 ? Math.min(targetTime, duration) : targetTime;
-      audio.currentTime = clamped;
+      audio.currentTime = targetTime;
+      pendingStartTime = null;
     }
     emitState({ currentTime: targetTime });
     updatePositionState();
@@ -440,7 +478,7 @@ export const AudioEngine = {
   },
 
   savePlaybackPosition() {
-    savePlaybackPosition();
+    return savePlaybackPosition();
   },
 
   getCurrentSongId(): string | null {
@@ -451,7 +489,33 @@ export const AudioEngine = {
     return currentAlbumId;
   },
 
+  reset() {
+    generation++;
+    accountGeneration++;
+    playAttempt++;
+    pendingSave = null;
+    lastSavedKey = null;
+    lastSaveTimestamp = 0;
+    currentSongId = null;
+    currentAlbumId = null;
+    currentSetMetadata = null;
+    pendingStartTime = null;
+    stopVisualization();
+    suppressEvents = true;
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+    }
+    suppressEvents = false;
+    if ('mediaSession' in navigator) {
+      try { navigator.mediaSession.metadata = null; navigator.mediaSession.setPositionState?.(); } catch { /* optional */ }
+    }
+    emitState({ status: 'idle', currentSetId: null, currentSongId: null, currentTime: 0, duration: 0, isPlaying: false, error: null });
+  },
+
   destroy() {
+    AudioEngine.reset();
     stopVisualization();
     onVisualizationDataCallback = null;
     if (sourceNode) {
@@ -473,7 +537,6 @@ export const AudioEngine = {
       audioContext = null;
     }
     if (!audio) return;
-    savePlaybackPosition();
     if (typeof window !== 'undefined') {
       window.removeEventListener('beforeunload', savePlaybackPosition);
       window.removeEventListener('pagehide', savePlaybackPosition);

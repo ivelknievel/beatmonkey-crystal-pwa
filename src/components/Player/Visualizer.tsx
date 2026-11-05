@@ -8,12 +8,15 @@ const BAR_GAP = 2;
 interface VisualizerProps {
   engine: AudioEngine;
   isPlaying: boolean;
+  enabled?: boolean;
 }
 
-export function Visualizer({ engine, isPlaying }: VisualizerProps) {
+export function Visualizer({ engine, isPlaying, enabled = false }: VisualizerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
+    // Never attach a WebAudio source just because the player overlay opened.
+    if (!enabled || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -49,7 +52,9 @@ export function Visualizer({ engine, isPlaying }: VisualizerProps) {
       engine.stopVisualization();
       engine.onVisualizationData = null;
     };
-  }, [engine, isPlaying]);
+  }, [engine, isPlaying, enabled]);
+
+  if (!enabled) return null;
 
   return (
     <canvas

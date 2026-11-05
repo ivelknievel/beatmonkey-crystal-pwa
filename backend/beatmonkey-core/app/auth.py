@@ -33,30 +33,42 @@ TRUSTED_CLIENT_IDS = {
 if GOOGLE_CLIENT_ID:
     TRUSTED_CLIENT_IDS.add(GOOGLE_CLIENT_ID)
 
-def verify_google_token(token: str, client_id: Optional[str] = None) -> Optional[dict]:
-    """Valideer Google ID token, return {email, name, sub} of None"""
+def verify_google_token(
+    token: str,
+    client_id: Optional[str] = None,
+    expected_nonce: Optional[str] = None,
+) -> Optional[dict]:
+    """Verify Google's signed claims against server-owned clients and optional nonce."""
+    # Request data must never expand the server's trusted audience set.
+    if client_id is not None and client_id not in TRUSTED_CLIENT_IDS:
+        return None
+    # With no requested client, accept any server-trusted audience (including
+    # existing Android clients even when GOOGLE_CLIENT_ID configures the web).
+    cid = client_id
     try:
-        cid = client_id or GOOGLE_CLIENT_ID or None
-        id_info = None
-        if cid:
-            try:
-                id_info = id_token.verify_oauth2_token(token, google_requests.Request(), cid)
-            except Exception:
-                pass
-
-        if not id_info:
-            id_info = id_token.verify_oauth2_token(token, google_requests.Request())
-            aud = id_info.get("aud")
-            if aud not in TRUSTED_CLIENT_IDS and aud != cid:
+        # Google verifies signature, expiry and issuer. Never retry a failed
+        # audience-bound verification without its audience constraint.
+        id_info = id_token.verify_oauth2_token(token, google_requests.Request(), cid)
+        aud = id_info.get("aud")
+        if not isinstance(aud, str) or aud not in TRUSTED_CLIENT_IDS:
+            return None
+        if cid is not None and aud != cid:
+            return None
+        if id_info.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
+            return None
+        # Android callers may omit nonce; supplied (including empty) nonces
+        # must match a nonempty claim from the verified token.
+        if expected_nonce is not None:
+            if not expected_nonce or id_info.get("nonce") != expected_nonce:
                 return None
-
         return {
             "email": id_info.get("email"),
             "name": id_info.get("name"),
             "sub": id_info.get("sub")
         }
-    except Exception as e:
-        print(f"Google token verification failed: {e}")
+    except Exception:
+        # Verifier exception messages can include the bearer credential.
+        print("Google token verification failed")
         return None
 
 def create_session_token(navidrome_user_id: str, email: str, user_name: str, is_admin: bool) -> str:

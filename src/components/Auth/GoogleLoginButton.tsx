@@ -1,23 +1,26 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
+import { beginGoogleRequest } from '../../services/authRequest';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 const REDIRECT_URI = 'https://music.cyberspeeze.online/app/auth/callback';
 
 export function GoogleLoginButton() {
+  const [error, setError] = useState<string | null>(null);
   const handleGoogleLogin = useCallback(() => {
-    // Save current URL to return after auth
-    sessionStorage.setItem('auth_return_url', window.location.pathname.replace(/^\/app(?=\/|$)/, '') + window.location.search);
-    
-    // Build Google OAuth URL
-    const params = new URLSearchParams({
-      client_id: GOOGLE_CLIENT_ID,
-      redirect_uri: REDIRECT_URI,
-      response_type: 'code id_token',
-      scope: 'openid email profile',
-      nonce: Math.random().toString(36).substring(2, 15),
-    });
-    
-    window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+    try {
+      const request = beginGoogleRequest(window.location.pathname + window.location.search + window.location.hash);
+      const params = new URLSearchParams({
+        client_id: GOOGLE_CLIENT_ID,
+        redirect_uri: REDIRECT_URI,
+        response_type: 'code id_token',
+        scope: 'openid email profile',
+        state: request.state,
+        nonce: request.nonce,
+      });
+      window.location.assign(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
+    } catch {
+      setError('Inloggen vereist veilige browseropslag. Sta opslag toe en probeer opnieuw.');
+    }
   }, []);
 
   if (!GOOGLE_CLIENT_ID) return null;
@@ -42,6 +45,7 @@ export function GoogleLoginButton() {
         </svg>
         <span>Inloggen met Google</span>
       </button>
+      {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
     </div>
   );
 }

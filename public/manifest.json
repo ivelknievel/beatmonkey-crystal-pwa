@@ -2,6 +2,8 @@
   "name": "Beatmonkey Crystal",
   "short_name": "Beatmonkey",
   "description": "Beatmonkey Crystal PWA — DJ sets, festivals & livesets",
+  "id": "/app/",
+  "scope": "/app/",
   "start_url": "/app/",
   "display": "standalone",
   "background_color": "#0a0a0f",

@@ -1,10 +1,8 @@
-import { createRoute, useNavigate } from '@tanstack/react-router';
+import { createRoute } from '@tanstack/react-router';
 import { Route as rootRoute } from './__root';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuthStore } from '../stores/useAuthStore';
-import { AudioEngine } from '../engine/AudioEngine';
-import { usePlayerStore } from '../stores/playerStore';
-import { setCredentials } from '../services/subsonic';
+import { consumeGoogleCallback } from '../services/authRequest';
 import { Loader2, AlertCircle } from 'lucide-react';
 
 export const Route = createRoute({
@@ -14,42 +12,28 @@ export const Route = createRoute({
 });
 
 function AuthCallbackPage() {
-  const navigate = useNavigate();
+  const started = useRef(false);
   const login = useAuthStore((s) => s.login);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (started.current) return;
+    started.current = true;
     async function handle() {
-      // Google returned with #id_token=... in the URL fragment
-      const hash = window.location.hash.substring(1);
-      const params = new URLSearchParams(hash);
-      const idToken = params.get('id_token');
-      
-      if (!idToken) {
-        setError('Geen token ontvangen van Google');
-        return;
-      }
-      
-      const ok = await login(idToken);
-      if (ok) {
-        const { subsonic_user, subsonic_pass } = useAuthStore.getState();
-        if (subsonic_user) {
-          setCredentials(subsonic_user, subsonic_pass || '');
-        }
-        AudioEngine.init();
-        usePlayerStore.getState().setStatus('idle');
-        usePlayerStore.getState().syncLikedSets();
-        // Shared set navigation takes priority over the saved play queue.
-        const returnUrl = sessionStorage.getItem('auth_return_url') || '/discover';
-        sessionStorage.removeItem('auth_return_url');
-        const safeReturn = returnUrl.startsWith('/') && !returnUrl.startsWith('//') ? returnUrl.replace(/^\/app(?=\/|$)/, '') : '/discover';
-        window.location.replace('/app' + safeReturn);
-      } else {
-        setError('Authenticatie mislukt');
+      try {
+        const fragment = window.location.hash;
+        // Never leave bearer material in browser history, including failed callbacks.
+        window.history.replaceState(null, '', window.location.pathname);
+        const { idToken, expectedNonce, returnUrl } = consumeGoogleCallback(fragment);
+        const ok = await login(idToken, expectedNonce);
+        if (ok) window.location.replace('/app' + returnUrl);
+        else setError('Authenticatie mislukt. Probeer opnieuw in te loggen.');
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Ongeldige Google-aanvraag. Probeer opnieuw.');
       }
     }
-    handle();
-  }, [login, navigate]);
+    void handle();
+  }, [login]);
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
@@ -59,7 +43,8 @@ function AuthCallbackPage() {
             <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400">
               <AlertCircle size={24} />
             </div>
-            <p className="text-sm text-red-400">{error}</p>
+            <p role="alert" className="text-sm text-red-400">{error}</p>
+            <a href="/app/discover" className="text-base underline">Terug naar inloggen</a>
           </>
         ) : (
           <>

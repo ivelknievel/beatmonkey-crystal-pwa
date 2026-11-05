@@ -1,73 +1,48 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Outlet, useRouterState } from '@tanstack/react-router';
 import { BottomNav } from '../Navigation/BottomNav';
 import { MiniPlayerBar } from '../MiniPlayer/MiniPlayerBar';
 import { FullscreenPlayerOverlay } from '../Player/FullscreenPlayerOverlay';
 import { LoginFlow } from '../Auth/LoginFlow';
-import { AudioEngine } from '../../engine/AudioEngine';
-import { setCredentials, ping } from '../../services/subsonic';
-import { loadSubsonicCredentials } from '../../services/authService';
+import { decodeJwt, isTokenValid } from '../../services/authService';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useAuthStore } from '../../stores/useAuthStore';
 
 export function RootLayout() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const isFullscreen = usePlayerStore((s) => s.isFullscreen);
-  const checkSession = useAuthStore((s) => s.checkSession);
-  const isGoogleAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const { checkSession, isAuthenticated, isLoading, token, logout } = useAuthStore();
   const routerState = useRouterState();
-  const pathname = routerState.location.pathname;
-  const isAuthCallback = pathname.includes('/auth/callback');
+  const isAuthCallback = routerState.location.pathname.includes('/auth/callback');
 
-  // Check login on mount
   useEffect(() => {
-    checkSession();
-    async function checkAuth() {
-      const creds = await loadSubsonicCredentials();
-      if (creds) {
-        setCredentials(creds.user, creds.pass);
-        const ok = await ping();
-        if (ok) {
-          setIsLoggedIn(true);
-          AudioEngine.init();
-          usePlayerStore.getState().setStatus('idle');
-          usePlayerStore.getState().syncLikedSets();
-          usePlayerStore.getState().restoreLastPosition();
-        }
-      }
-    }
-    checkAuth();
-  }, [checkSession]);
+    if (isAuthCallback) return;
+    void checkSession();
+    const recheck = () => { if (document.visibilityState === 'visible') void checkSession(); };
+    window.addEventListener('focus', recheck);
+    document.addEventListener('visibilitychange', recheck);
+    return () => { window.removeEventListener('focus', recheck); document.removeEventListener('visibilitychange', recheck); };
+  }, [checkSession, isAuthCallback]);
 
-  // Sync Subsonic state when Google session is established
   useEffect(() => {
-    if (isGoogleAuthenticated) {
-      async function syncGoogleAuth() {
-        const creds = await loadSubsonicCredentials();
-        const storeUser = useAuthStore.getState().subsonic_user;
-        const storePass = useAuthStore.getState().subsonic_pass;
-        const user = creds?.user || storeUser;
-        const pass = creds?.pass || storePass || '';
-        if (user) {
-          setCredentials(user, pass);
-          AudioEngine.init();
-          usePlayerStore.getState().setStatus('idle');
-          usePlayerStore.getState().syncLikedSets();
-          usePlayerStore.getState().restoreLastPosition();
-          setIsLoggedIn(true);
-        }
-      }
-      syncGoogleAuth();
-    }
-  }, [isGoogleAuthenticated]);
+    if (!token) return;
+    const exp = decodeJwt(token)?.exp;
+    let timer: number;
+    let cancelled = false;
+    const schedule = () => {
+      const remaining = typeof exp === 'number' ? exp * 1000 - Date.now() : 0;
+      // Re-arm long sessions after the browser's maximum timer interval.
+      timer = window.setTimeout(() => {
+        if (cancelled) return;
+        if (isTokenValid(token)) schedule(); else void logout();
+      }, Math.min(Math.max(remaining, 0), 2147483647));
+    };
+    schedule();
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [token, logout]);
 
-  if (isAuthCallback) {
-    return <Outlet />;
-  }
-
-  if (!isLoggedIn && !isGoogleAuthenticated) {
-    return <LoginFlow onLogin={() => setIsLoggedIn(true)} />;
-  }
+  if (isAuthCallback) return <Outlet />;
+  if (isLoading) return <div role="status" className="min-h-dvh grid place-items-center">Sessie controleren...</div>;
+  if (!isAuthenticated) return <LoginFlow />;
 
   return (
     <div className="grid h-dvh grid-rows-[1fr_auto_auto] overflow-hidden bg-[var(--color-crystal-bg)] text-[#e0e0e0]">
