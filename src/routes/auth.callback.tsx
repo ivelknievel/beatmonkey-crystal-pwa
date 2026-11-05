@@ -39,10 +39,11 @@ function AuthCallbackPage() {
         AudioEngine.init();
         usePlayerStore.getState().setStatus('idle');
         usePlayerStore.getState().syncLikedSets();
-        usePlayerStore.getState().restoreLastPosition();
+        // Shared set navigation takes priority over the saved play queue.
         const returnUrl = sessionStorage.getItem('auth_return_url') || '/discover';
         sessionStorage.removeItem('auth_return_url');
-        navigate({ to: returnUrl });
+        const safeReturn = returnUrl.startsWith('/') && !returnUrl.startsWith('//') ? returnUrl.replace(/^\/app(?=\/|$)/, '') : '/discover';
+        window.location.replace('/app' + safeReturn);
       } else {
         setError('Authenticatie mislukt');
       }

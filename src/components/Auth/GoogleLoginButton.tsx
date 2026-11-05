@@ -6,7 +6,7 @@ const REDIRECT_URI = 'https://music.cyberspeeze.online/app/auth/callback';
 export function GoogleLoginButton() {
   const handleGoogleLogin = useCallback(() => {
     // Save current URL to return after auth
-    sessionStorage.setItem('auth_return_url', window.location.pathname);
+    sessionStorage.setItem('auth_return_url', window.location.pathname.replace(/^\/app(?=\/|$)/, '') + window.location.search);
     
     // Build Google OAuth URL
     const params = new URLSearchParams({

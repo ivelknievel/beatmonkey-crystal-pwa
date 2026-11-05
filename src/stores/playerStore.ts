@@ -136,7 +136,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       AudioEngine.loadSet(songId, targetStartTime, setInfo);
 
       // Na het laden van de audio, check playqueue
-      if (targetStartTime === 0 && !setInfo.id.startsWith('http://') && !setInfo.id.startsWith('https://')) {
+      if (!window.location.pathname.startsWith('/app/set/') && targetStartTime === 0 && !setInfo.id.startsWith('http://') && !setInfo.id.startsWith('https://')) {
         try {
           const pq = await getPlayQueue();
           if (pq && pq.songId && pq.position > 0) {
@@ -177,6 +177,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
 
   restoreLastPosition: async () => {
+    // Keep a mandatory-login share target intact, including after OAuth.
+    if (window.location.pathname.startsWith('/app/set/') || sessionStorage.getItem('auth_return_url')?.startsWith('/set/')) return;
     try {
       const pq = await getPlayQueue();
       if (!pq || !pq.songId) return;

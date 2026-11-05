@@ -116,6 +116,7 @@ export interface SubsonicAlbum {
 
 export interface SubsonicSong {
   id: string;
+  albumId?: string;
   parent?: string;
   title: string;
   album?: string;

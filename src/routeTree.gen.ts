@@ -8,7 +8,10 @@ import { Route as djDetailRoute } from './routes/djs.$id';
 import { Route as festivalDetailRoute } from './routes/festivals.$slug';
 import { Route as authCallbackRoute } from './routes/auth.callback';
 
+import { Route as setRoute } from './routes/set.$id';
+
 export const routeTree = rootRoute.addChildren([
+  setRoute,
   indexRoute,
   discoverRoute,
   libraryRoute,
