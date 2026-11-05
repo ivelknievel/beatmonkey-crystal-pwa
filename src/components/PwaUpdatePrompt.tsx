@@ -7,7 +7,8 @@ export function PwaUpdatePrompt() {
   const [activated, setActivated] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [error, setError] = useState('');
-  const consent = useRef(false);
+  // Consent belongs to one worker, never to an arbitrary controllerchange.
+  const consent = useRef<ServiceWorker | null>(null);
   const isPlaying = usePlayerStore(s => s.isPlaying);
   const status = usePlayerStore(s => s.status);
   const busy = isPlaying || status === 'loading';
@@ -19,11 +20,40 @@ export function PwaUpdatePrompt() {
 
   useEffect(() => {
     if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return;
+    const container = navigator.serviceWorker;
     let disposed = false;
+    let controller = container.controller;
     let registration: ServiceWorkerRegistration | undefined;
     let installing: ServiceWorker | null = null;
+    let offered: ServiceWorker | null = null;
+    let completed: ServiceWorker | null = null;
+    const didActivate = (worker: ServiceWorker) => {
+      if (disposed || completed === worker) return;
+      completed = worker;
+      setActivated(true);
+      setDismissed(false);
+      // Other tabs may activate an update, but cannot authorize this tab's reload.
+      const authorized = consent.current === worker;
+      consent.current = null;
+      if (authorized && canReload()) window.location.reload();
+    };
+    const waitingChanged = () => {
+      if (offered?.state === 'activated') didActivate(offered);
+    };
     const observe = () => {
-      if (!disposed && registration?.waiting) { setWaiting(registration.waiting); setDismissed(false); }
+      if (disposed) return;
+      const next = registration?.waiting;
+      // First installation briefly has a waiting worker too. Require an older worker.
+      // An active registration also covers an existing install in an uncontrolled tab.
+      if (!next || (!container.controller && !registration?.active) || next === offered) return;
+      offered?.removeEventListener?.('statechange', waitingChanged);
+      offered = next;
+      completed = null;
+      consent.current = null;
+      offered.addEventListener?.('statechange', waitingChanged);
+      setWaiting(next);
+      setActivated(false);
+      setDismissed(false);
     };
     const stateChanged = () => observe();
     const updateFound = () => {
@@ -34,14 +64,15 @@ export function PwaUpdatePrompt() {
     };
     const controllerChanged = () => {
       if (disposed) return;
-      // Other tabs can activate the update, but cannot authorize this tab's reload.
-      setActivated(true);
-      setDismissed(false);
-      if (consent.current && canReload()) window.location.reload();
-      consent.current = false;
+      const previous = controller;
+      controller = container.controller;
+      // Ignore initial acquisition, loss and duplicates, including acquisition
+      // before the register() promise settles.
+      if (!previous || !controller || previous === controller) return;
+      didActivate(controller);
     };
-    navigator.serviceWorker.addEventListener('controllerchange', controllerChanged);
-    void navigator.serviceWorker.register('/app/service-worker.js', { scope: '/app/', updateViaCache: 'none' }).then(reg => {
+    container.addEventListener('controllerchange', controllerChanged);
+    void container.register('/app/service-worker.js', { scope: '/app/', updateViaCache: 'none' }).then(reg => {
       if (disposed) return;
       registration = reg;
       reg.addEventListener('updatefound', updateFound);
@@ -49,18 +80,20 @@ export function PwaUpdatePrompt() {
     }).catch(() => { /* Offline first visit remains usable without an installed SW. */ });
     return () => {
       disposed = true;
+      consent.current = null;
       registration?.removeEventListener('updatefound', updateFound);
       installing?.removeEventListener('statechange', stateChanged);
-      navigator.serviceWorker.removeEventListener('controllerchange', controllerChanged);
+      offered?.removeEventListener?.('statechange', waitingChanged);
+      container.removeEventListener('controllerchange', controllerChanged);
     };
   }, []);
 
   const apply = () => {
     if (!canReload()) { setError('Pauzeer eerst de muziek en werk daarna bij.'); return; }
     setError('');
-    if (activated) { window.location.reload(); return; }
+    if (activated || waiting?.state === 'activated') { window.location.reload(); return; }
     if (waiting) {
-      consent.current = true;
+      consent.current = waiting;
       waiting.postMessage({ type: 'ACTIVATE_UPDATE' });
     }
   };
@@ -70,7 +103,7 @@ export function PwaUpdatePrompt() {
     {error && <p role="alert">{error}</p>}
     <div className="flex gap-4 mt-2">
       <button type="button" disabled={busy} onClick={apply}>Nu bijwerken</button>
-      <button type="button" onClick={() => { consent.current = false; setDismissed(true); }}>Later</button>
+      <button type="button" onClick={() => { consent.current = null; setDismissed(true); }}>Later</button>
     </div>
   </aside>;
 }

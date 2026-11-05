@@ -43,6 +43,90 @@ async function routeEnvironment(overrides = {}) {
   };
 }
 
+test('failed shared B metadata cannot resume prepared A through fullscreen play', async () => {
+  const env = await routeEnvironment({ getAlbum: (id, call) => {
+    if (id === 'B' && call === 2) throw Error('metadata failed');
+    return album(id);
+  } });
+  await env.store.getState().loadSet(info('A'));
+  env.store.getState().setFullscreen(false);
+  const audio = env.engine.getAudioElement();
+  const plays = audio.playCalls;
+  env.mount('song-B'); await tick();
+  assert.equal(env.store.getState().currentSetId, 'B');
+  assert.equal(env.store.getState().currentSongId, null);
+  assert.equal(env.store.getState().error, 'Set laden mislukt. Probeer opnieuw.');
+  assert.equal(env.store.getState().isFullscreen, true, 'keep the failed selection and its live error visible');
+  // PlaybackControls calls the engine directly, not the store action.
+  env.engine.togglePlay(); await tick();
+  assert.equal(audio.paused, true, 'fullscreen play must not resume A after failed B');
+  assert.equal(audio.playCalls, plays, 'no media play invocation without a resolved source');
+  await env.store.getState().play(); env.store.getState().togglePlay(); await tick();
+  assert.equal(audio.playCalls, plays, 'store play controls must also remain safe');
+  assert.equal(env.engine.getCurrentSongId(), null);
+  assert.equal(audio.src, '');
+  assert.equal(env.store.getState().error, 'Set laden mislukt. Probeer opnieuw.');
+  env.unmount();
+});
+
+test('resolved shared B blocked autoplay still retries B through fullscreen play, never A', async () => {
+  const env = await routeEnvironment();
+  await env.store.getState().loadSet(info('A'));
+  const audio = env.engine.getAudioElement();
+  audio.rejectPlay = { name: 'NotAllowedError', message: 'raw browser rejection' };
+  env.mount('song-B'); await tick();
+  assert.equal(env.store.getState().isFullscreen, true);
+  assert.equal(env.store.getState().status, 'blocked');
+  assert.equal(env.store.getState().error, 'Tik op Afspelen om deze set te starten.');
+  assert.equal(env.engine.getCurrentSongId(), 'song-B');
+  assert.match(audio.src, /\/song-B$/);
+  audio.rejectPlay = null;
+  env.engine.togglePlay(); await tick();
+  assert.equal(audio.paused, false);
+  assert.equal(env.store.getState().status, 'playing');
+  assert.equal(env.store.getState().error, null);
+  assert.equal(env.store.getState().currentSongId, 'song-B');
+  env.engine.pause();
+  assert.equal(env.store.getState().error, null, 'guidance must not reappear after pause');
+  env.unmount();
+});
+
+test('unresolved shared B invalidates A before metadata settles and preserves its outgoing save', async () => {
+  const pending = deferred();
+  const env = await routeEnvironment({ getAlbum: (id, call) => id === 'B' && call === 2 ? pending.promise : album(id) });
+  await env.store.getState().loadSet(info('A'));
+  const audio = env.engine.getAudioElement(); audio.currentTime = 42;
+  env.mount('song-B'); await tick();
+  const plays = audio.playCalls;
+  env.engine.togglePlay(); await env.engine.play(); await tick();
+  assert.equal(audio.paused, true, 'pending B cannot play A via direct engine or media-session play');
+  assert.equal(audio.playCalls, plays);
+  assert.equal(env.engine.getCurrentSongId(), null);
+  assert.deepEqual(env.saves, [['song-A', 42000, 'A']], 'selection invalidation is not an account reset');
+  pending.resolve(album('B')); await tick();
+  assert.equal(env.engine.getCurrentSongId(), 'song-B');
+  assert.equal(audio.paused, false);
+  env.unmount();
+});
+
+test('late failed shared B lookup cannot clear a newer selection or account source', async () => {
+  for (const changeAccount of [false, true]) {
+    const pending = deferred();
+    const env = await routeEnvironment({ getAlbum: (id, call) => id === 'B' && call === 2 ? pending.promise : album(id) });
+    await env.store.getState().loadSet(info('A'));
+    env.mount('song-B'); await tick();
+    if (changeAccount) env.store.getState().setAccountScope('new-account');
+    await env.store.getState().loadSet(info('C'));
+    pending.reject(Error('obsolete metadata failure')); await tick();
+    assert.equal(env.store.getState().currentSetId, 'C');
+    assert.equal(env.engine.getCurrentSongId(), 'song-C');
+    assert.equal(env.engine.getAudioElement().paused, false);
+    assert.equal(env.store.getState().error, null);
+    assert.equal(env.store.getState().isFullscreen, false);
+    env.unmount();
+  }
+});
+
 test('real shared route unmount cancels metadata already delegated to the actual store', { timeout: 3000 }, async () => {
   const pending = deferred();
   const env = await routeEnvironment({ getAlbum: (id, call) => call === 2 ? pending.promise : album(id) });

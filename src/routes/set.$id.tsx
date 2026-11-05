@@ -16,12 +16,16 @@ function SharedSetPage() {
   const { id } = Route.useParams();
   const { t } = Route.useSearch();
   const [error, setError] = useState('');
+  const [openedSetId, setOpenedSetId] = useState<string | null>(null);
+  // Playback errors have one owner: the live store. Do not snapshot them in route state.
+  const playbackError = usePlayerStore((s) => s.currentSetId === openedSetId ? s.error : null);
   useEffect(() => {
     let cancelled = false;
     // Owned by this effect run only: aborting it cancels the store load this route
     // started, without resetting a newer selection made elsewhere.
     const controller = new AbortController();
     setError('');
+    setOpenedSetId(null);
     async function open() {
       try {
         // RootLayout gates this route on the established account session.
@@ -42,14 +46,16 @@ function SharedSetPage() {
         }, t, controller.signal);
         if (cancelled || controller.signal.aborted) return;
         const state = usePlayerStore.getState();
-        if (state.error) throw new Error(state.error);
+        // A newer independent selection may have superseded this route's load.
+        if (state.currentSetId !== albumId || (songId && state.currentSongId && state.currentSongId !== songId)) return;
+        setOpenedSetId(albumId);
         state.setFullscreen(true);
-      } catch (e) {
-        if (!cancelled && !controller.signal.aborted) setError(e instanceof Error ? e.message : 'Set openen mislukt');
+      } catch {
+        if (!cancelled && !controller.signal.aborted) setError('Gedeelde set openen mislukt. Probeer opnieuw.');
       }
     }
     void open();
     return () => { cancelled = true; controller.abort(); };
   }, [id, t]);
-  return <div className="p-6" role="status">{error || 'Gedeelde set openen…'}</div>;
+  return <div className="p-6" role="status">{error || playbackError || (openedSetId ? 'Gedeelde set geopend.' : 'Gedeelde set openen…')}</div>;
 }

@@ -90,7 +90,7 @@ test('update requires explicit idle consent; cross-tab activation and resumed pl
   const h = hooks(); let state = { isPlaying: true, status: 'playing' }, paused = false, reloads = 0; const listeners = {}, messages = [];
   const waiting = { postMessage: value => messages.push(value) };
   const registration = { waiting, installing: null, addEventListener() {}, removeEventListener() {} };
-  const sw = { register: async () => registration, addEventListener: (n, fn) => { listeners[n] = fn; }, removeEventListener: n => { delete listeners[n]; } };
+  const sw = { controller: {}, register: async () => registration, addEventListener: (n, fn) => { listeners[n] = fn; }, removeEventListener: n => { delete listeners[n]; } };
   globals(t, { navigator: { serviceWorker: sw }, window: { location: { reload: () => reloads++ } } });
   const store = Object.assign(fn => fn(state), { getState: () => state });
   const { PwaUpdatePrompt } = await load('src/components/PwaUpdatePrompt.tsx', { react: h.react, '../stores/playerStore': { usePlayerStore: store }, '../engine/AudioEngine': { AudioEngine: { getAudioElement: () => ({ paused }) } } });
@@ -98,7 +98,7 @@ test('update requires explicit idle consent; cross-tab activation and resumed pl
   let tree = h.render(PwaUpdatePrompt); const update = () => find(tree, n => n.type === 'button' && n.props.children === 'Nu bijwerken').props;
   assert.equal(update().disabled, true); update().onClick(); assert.equal(messages.length, 0);
   state = { isPlaying: false, status: 'paused' }; paused = true; tree = h.render(PwaUpdatePrompt); update().onClick(); assert.deepEqual(messages, [{ type: 'ACTIVATE_UPDATE' }]);
-  state = { isPlaying: true, status: 'playing' }; paused = false; listeners.controllerchange(); assert.equal(reloads, 0);
+  state = { isPlaying: true, status: 'playing' }; paused = false; sw.controller = waiting; listeners.controllerchange(); assert.equal(reloads, 0);
   state = { isPlaying: false, status: 'paused' }; paused = true; tree = h.render(PwaUpdatePrompt); assert.equal(reloads, 0); update().onClick(); assert.equal(reloads, 1);
   listeners.controllerchange(); assert.equal(reloads, 1, 'another tab does not authorize reload');
   h.unmount(); assert.equal(listeners.controllerchange, undefined);
@@ -108,7 +108,7 @@ test('update is safe before any audio element has been initialized', async t => 
   const h = hooks(); const messages = [];
   const waiting = { postMessage: value => messages.push(value) };
   const registration = { waiting, installing: null, addEventListener() {}, removeEventListener() {} };
-  const sw = { register: async () => registration, addEventListener() {}, removeEventListener() {} };
+  const sw = { controller: {}, register: async () => registration, addEventListener() {}, removeEventListener() {} };
   globals(t, { navigator: { serviceWorker: sw }, window: { location: { reload() {} } } });
   const state = { isPlaying: false, status: 'idle' };
   const store = Object.assign(fn => fn(state), { getState: () => state });

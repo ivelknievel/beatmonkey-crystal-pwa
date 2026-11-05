@@ -2,6 +2,8 @@ import { getStreamUrl, getCoverUrl, savePlayQueue } from '../services/subsonic';
 import type { AudioState, SetInfo } from '../types';
 
 type StateChangeCallback = (state: Partial<AudioState>) => void;
+const PLAYBACK_ERROR = 'Afspelen mislukt. Probeer opnieuw via Afspelen.';
+const EXPLICIT_PLAY_GUIDANCE = 'Tik op Afspelen om deze set te starten.';
 
 let audio: HTMLAudioElement | null = null;
 let initialized = false;
@@ -303,12 +305,36 @@ function onEnded() {
 
 function onError() {
   if (!currentSongId || suppressEvents) return;
-  const errMsg = audio?.error ? `Audio playback error (${audio.error.code}): ${audio.error.message}` : 'Audio playback error';
   emitState({
     status: 'error',
     isPlaying: false,
-    error: errMsg,
+    error: PLAYBACK_ERROR,
   });
+}
+
+// Invalidate playback independently of account-scoped save cancellation.
+// An unresolved selection must not leave the previous source available to play.
+function clearSource() {
+  generation++;
+  playAttempt++;
+  lastSavedKey = null;
+  lastSaveTimestamp = 0;
+  currentSongId = null;
+  currentAlbumId = null;
+  currentSetMetadata = null;
+  pendingStartTime = null;
+  stopVisualization();
+  suppressEvents = true;
+  if (audio) {
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+  }
+  suppressEvents = false;
+  if ('mediaSession' in navigator) {
+    try { navigator.mediaSession.metadata = null; navigator.mediaSession.setPositionState?.(); } catch { /* optional */ }
+  }
+  emitState({ status: 'idle', currentSetId: null, currentSongId: null, currentTime: 0, duration: 0, isPlaying: false, error: null });
 }
 
 export const AudioEngine = {
@@ -394,8 +420,10 @@ export const AudioEngine = {
       startVisualization();
     } catch (err) {
       if (selected !== generation || attempt !== playAttempt) return;
-      const error = err instanceof Error ? err : new Error(String(err));
-      emitState({ status: error.name === 'NotAllowedError' ? 'blocked' : 'error', isPlaying: false, error: error.message });
+      // DOMException may originate in another realm; never surface browser exception text.
+      const blocked = typeof err === 'object' && err !== null && 'name' in err && err.name === 'NotAllowedError';
+      emitState({ status: blocked ? 'blocked' : 'error', isPlaying: false,
+        error: blocked ? EXPLICIT_PLAY_GUIDANCE : PLAYBACK_ERROR });
     }
   },
 
@@ -489,29 +517,15 @@ export const AudioEngine = {
     return currentAlbumId;
   },
 
+  unloadSet() {
+    void savePlaybackPosition();
+    clearSource();
+  },
+
   reset() {
-    generation++;
     accountGeneration++;
-    playAttempt++;
     pendingSave = null;
-    lastSavedKey = null;
-    lastSaveTimestamp = 0;
-    currentSongId = null;
-    currentAlbumId = null;
-    currentSetMetadata = null;
-    pendingStartTime = null;
-    stopVisualization();
-    suppressEvents = true;
-    if (audio) {
-      audio.pause();
-      audio.removeAttribute('src');
-      audio.load();
-    }
-    suppressEvents = false;
-    if ('mediaSession' in navigator) {
-      try { navigator.mediaSession.metadata = null; navigator.mediaSession.setPositionState?.(); } catch { /* optional */ }
-    }
-    emitState({ status: 'idle', currentSetId: null, currentSongId: null, currentTime: 0, duration: 0, isPlaying: false, error: null });
+    clearSource();
   },
 
   destroy() {

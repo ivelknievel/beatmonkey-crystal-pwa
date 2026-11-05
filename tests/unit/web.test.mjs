@@ -111,7 +111,9 @@ test('shared route observes timestamp and ignores late song metadata', async () 
   let params = { id: 'song-A' }, search = { t: 42 }, effects = [], cleanups = [], selected = [], resolveA;
   const a = new Promise(r => { resolveA = r; });
   const react = { useState: v => [v, () => {}], useRef: v => ({ current: v }), useEffect: (fn, deps) => { effects.push({ fn, deps }); } };
-  const store = { getState: () => ({ loadSet: async (set, t) => { selected.push({ set, t }); }, setFullscreen() {} }) };
+  const storeState = { currentSetId: null, currentSongId: null, error: null,
+    loadSet: async (set, t) => { selected.push({ set, t }); storeState.currentSetId = set.id; storeState.currentSongId = set.songId; }, setFullscreen() {} };
+  const store = Object.assign(selector => selector(storeState), { getState: () => storeState });
   const { Route } = await moduleSource('src/routes/set.$id.tsx', {
     '@tanstack/react-router': { createRoute: config => ({ ...config, useParams: () => params, useSearch: () => search }) }, react,
     'react/jsx-runtime': { jsx: () => null, jsxs: () => null }, './__root': { Route: {} },

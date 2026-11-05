@@ -26,6 +26,7 @@ export function FullscreenPlayerOverlay() {
   const setFullscreen = usePlayerStore((s) => s.setFullscreen);
   const queue = usePlayerStore((s) => s.queue);
   const status = usePlayerStore((s) => s.status);
+  const playbackError = usePlayerStore((s) => s.error);
 
   // Trigger slide-up on mount
   useEffect(() => {
@@ -277,7 +278,7 @@ export function FullscreenPlayerOverlay() {
           </div>
 
           {/* Festival / Stage / Year Badges */}
-          {(festival || stage || year) && (
+          {Boolean(festival || stage || year) && (
             <div className="mt-2.5 flex items-center justify-center gap-2 flex-wrap">
               {festival && (
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[var(--color-crystal-cyan)]/15 text-[var(--color-crystal-cyan)] border border-[var(--color-crystal-cyan)]/30">
@@ -289,7 +290,7 @@ export function FullscreenPlayerOverlay() {
                   {stage}
                 </span>
               )}
-              {year && (
+              {Boolean(year) && (
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs text-gray-400 bg-white/5 border border-white/10 font-mono">
                   {year}
                 </span>
@@ -313,6 +314,7 @@ export function FullscreenPlayerOverlay() {
         </div>
 
         {/* <Controls> */}
+        {playbackError && <p className="px-6 text-center text-sm text-gray-300" role="status">{playbackError}</p>}
         <PlaybackControls />
 
         {/* <TracklistSection> */}

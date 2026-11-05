@@ -1,5 +1,5 @@
 import { useRef, useEffect } from 'react';
-import type { MouseEvent, KeyboardEvent } from 'react';
+import type { MouseEvent } from 'react';
 import { Play, Pause, Disc3, Loader2 } from 'lucide-react';
 import { usePlayerStore } from '../../stores/playerStore';
 import { AudioEngine } from '../../engine/AudioEngine';
@@ -63,12 +63,6 @@ export function MiniPlayerBar({
     }
   };
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      handleOpenFullscreen();
-    }
-  };
-
   const handlePlayPause = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     if (onPlayPause) {
@@ -87,14 +81,17 @@ export function MiniPlayerBar({
     : null;
 
   return (
-    <div
-      onClick={handleOpenFullscreen}
-      role="button"
-      tabIndex={0}
-      onKeyDown={handleKeyDown}
+    <section
       className="relative w-full h-15 bg-[var(--color-crystal-card)]/95 backdrop-blur-md border-t border-[var(--color-crystal-border)] flex items-center px-4 gap-3 cursor-pointer select-none transition-colors hover:bg-[var(--color-crystal-card)] z-20"
       aria-label={`Mini-player: ${title} - ${artist}`}
     >
+      {/* Native open action sits behind, not around, the other controls. */}
+      <button
+        type="button"
+        onClick={handleOpenFullscreen}
+        aria-label={`Open speler: ${title} - ${artist}`}
+        className="absolute inset-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-[-4px] focus-visible:outline-[var(--color-crystal-cyan)]"
+      />
       {/* Mini Progress Bar (direct DOM manipulation via rAF) */}
       <div className="absolute top-0 left-0 right-0 h-[2px] bg-white/10 overflow-hidden pointer-events-none">
         <div
@@ -104,7 +101,7 @@ export function MiniPlayerBar({
       </div>
 
       {/* Cover Thumbnail (40x40) */}
-      <div className="relative w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 bg-[var(--color-crystal-surface)] border border-[var(--color-crystal-border)] flex items-center justify-center">
+      <div className="relative pointer-events-none w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 bg-[var(--color-crystal-surface)] border border-[var(--color-crystal-border)] flex items-center justify-center">
         {coverSrc ? (
           <img
             src={coverSrc}
@@ -121,7 +118,7 @@ export function MiniPlayerBar({
       </div>
 
       {/* Track info (1 line, truncated) */}
-      <div className="flex-1 min-w-0 flex flex-col justify-center">
+      <div className="relative pointer-events-none flex-1 min-w-0 flex flex-col justify-center">
         <p className="text-sm font-semibold text-white truncate leading-tight">
           {title}
         </p>
@@ -131,12 +128,12 @@ export function MiniPlayerBar({
       </div>
 
       {/* Actions: Favorite + Play/Pause */}
-      <div className="flex items-center gap-1 flex-shrink-0">
+      <div className="relative flex items-center gap-1 flex-shrink-0">
         {set?.id && <FavoriteButton setId={set.id} />}
         <button
           type="button"
           onClick={handlePlayPause}
-          className="w-10 h-10 rounded-full flex items-center justify-center text-white hover:text-[var(--color-crystal-cyan)] active:scale-95 transition-all focus:outline-none"
+          className="w-10 h-10 rounded-full flex items-center justify-center text-white hover:text-[var(--color-crystal-cyan)] active:scale-95 transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-crystal-cyan)]"
           aria-label={isPlaying ? 'Pauzeer' : 'Afspelen'}
         >
           {isLoading ? (
@@ -148,7 +145,7 @@ export function MiniPlayerBar({
           )}
         </button>
       </div>
-    </div>
+    </section>
   );
 }
 

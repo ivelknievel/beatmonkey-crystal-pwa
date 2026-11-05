@@ -133,8 +133,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const selected = ++selectionGeneration;
     const account = accountGeneration;
     const active = () => !signal?.aborted && selected === selectionGeneration && account === accountGeneration;
-    // Stop the old source before any async lookup can let its events overwrite selection state.
-    AudioEngine.pause();
+    // Retire the old source before lookup: direct engine/media-session play must
+    // not resume it while this selection is unresolved or after metadata fails.
+    AudioEngine.unloadSet();
     set({ currentSetId: setInfo.id, currentSongId: null, currentSet: setInfo,
       currentTime: safePosition(startTime, setInfo.duration), duration: setInfo.duration || 0,
       status: 'loading', isPlaying: false, error: null, activeCueIndex: -1 });
@@ -167,9 +168,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
           if (pq?.songId === songId && Number.isFinite(pq.position) && pq.position > 0) AudioEngine.seek(pq.position / 1000);
         } catch { /* resume is optional */ }
       }
-    } catch (err) {
+    } catch {
       if (!active()) return;
-      set({ status: 'error', isPlaying: false, error: err instanceof Error ? err.message : 'Fout bij laden' });
+      set({ status: 'error', isPlaying: false, error: 'Set laden mislukt. Probeer opnieuw.' });
     }
   },
 
