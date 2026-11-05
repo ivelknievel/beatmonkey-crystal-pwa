@@ -42,7 +42,7 @@ export function DiscoverPage() {
     loadData();
   }, [loadData]);
 
-  const spotlightFestival = festivals.find((f) => f.slug === 'lief') || festivals[0];
+  const spotlightFestival = festivals[0];
 
   return (
     <div className="p-4 sm:p-6 max-w-5xl mx-auto space-y-8 pb-20">

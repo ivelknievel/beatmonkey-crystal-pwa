@@ -955,7 +955,10 @@ async def discover_djs():
         name = item["dj_name"]
         artist_id = item.get("id") or ""
         liveset_count = item["liveset_count"]
-        meta = await metadata_service.enrich_dj(name)
+        # Catalog reads stay on SQLite: live Discogs enrichment here turned a
+        # rate-limited third party into multi-minute page loads. Refreshes run
+        # through /api/discover/refresh-metadata instead.
+        meta = await metadata_service.enrich_dj(name, cached_only=True)
         logo_url = find_logo_for_dj(name, meta, festival_logos)
         if meta:
             enriched_djs.append({
@@ -986,8 +989,9 @@ async def discover_djs():
     return {"djs": enriched_djs}
 
 @app.get("/api/discover/dj/{dj_name}")
-async def discover_dj_by_name(dj_name: str):
-    meta = await metadata_service.enrich_dj(dj_name)
+async def discover_dj_by_name(dj_name: str, refresh: bool = False):
+    # Same rule as the catalog: serve from cache, fetch only on an explicit request.
+    meta = await metadata_service.enrich_dj(dj_name, force=refresh, cached_only=not refresh)
     livesets = get_navidrome_livesets_for_dj(dj_name)
     festival_logos = get_all_festival_logos_from_db()
     logo_url = find_logo_for_dj(dj_name, meta, festival_logos)

@@ -3,7 +3,7 @@ import { useParams, useNavigate } from '@tanstack/react-router';
 import { getFestivalDetail } from '../services/discoveryApi';
 import { usePlayerStore } from '../stores/playerStore';
 import type { FestivalInfo, SetInfo, StageInfo } from '../types';
-import { Loader2, AlertCircle, Play, ExternalLink, Heart, Flame, ChevronLeft } from 'lucide-react';
+import { Loader2, AlertCircle, Play, Heart, Flame, ChevronLeft } from 'lucide-react';
 import { getCoverUrl } from '../services/subsonic';
 
 function YoutubeIcon({ size = 14, className = '' }: { size?: number; className?: string }) {
@@ -106,7 +106,7 @@ export function FestivalDetailPage() {
       <HeroBanner festival={festival} />
 
       {/* Action buttons */}
-      <ActionButtons festival={festival} sets={sets} />
+      <ActionButtons sets={sets} />
 
       {/* Area tabs */}
       {stages.length > 0 && (
@@ -194,7 +194,7 @@ function AreaTabs({
   );
 }
 
-function ActionButtons({ festival, sets }: { festival: FestivalInfo | null; sets: any[] }) {
+function ActionButtons({ sets }: { sets: any[] }) {
   const playAll = () => {
     if (!sets || sets.length === 0) return;
     // Queue all sets, play first
@@ -216,7 +216,6 @@ function ActionButtons({ festival, sets }: { festival: FestivalInfo | null; sets
     usePlayerStore.getState().setFullscreen(true);
   };
 
-  const websiteUrl = festival?.slug === 'lief' || !festival ? 'https://lieffestival.nl/' : 'https://lieffestival.nl/';
 
   return (
     <div className="flex flex-wrap gap-3 mt-4">
@@ -228,14 +227,6 @@ function ActionButtons({ festival, sets }: { festival: FestivalInfo | null; sets
       >
         <Play size={16} className="fill-black" /> Speel Alles
       </button>
-      <a
-        href={websiteUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="flex items-center gap-2 px-5 py-3 bg-crystal-surface border border-crystal-border text-gray-300 rounded-xl text-sm hover:border-crystal-cyan/40 hover:text-white transition-colors cursor-pointer"
-      >
-        <ExternalLink size={16} /> Bekijk Website
-      </a>
     </div>
   );
 }

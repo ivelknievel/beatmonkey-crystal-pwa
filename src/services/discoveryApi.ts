@@ -8,157 +8,6 @@ const BASE = 'https://music.cyberspeeze.online';
 // Curated Fallback Festivals
 const DEFAULT_FESTIVALS: FestivalInfo[] = [
   {
-    name: 'LIEF Festival',
-    slug: 'lief',
-    logo: 'https://music.cyberspeeze.online/static/festivals/lief.png',
-    date: 'September 2026',
-    description: 'Het meest kleurrijke festival van Utrecht vol techno, tech-house en live elektronische beats.',
-    stages: [
-      {
-        name: 'Main Stage',
-        sets: [
-          {
-            id: '2tm2CHSBGk6EWeOPPr66Bj',
-            title: 'Dutch Pyramid Sunset DJ Set',
-            artist: 'Ninsa',
-            coverArt: 'al-2tm2CHSBGk6EWeOPPr66Bj_6a8c0d77',
-            duration: 5681,
-            year: 2026,
-            genre: 'Melodic Techno',
-            festival: 'LIEF Festival',
-            stage: 'Main Stage',
-          },
-          {
-            id: '61u75E11h4JtNPjfmU03nW',
-            title: 'The Concourse Project Full Set',
-            artist: 'Helsloot',
-            coverArt: 'al-61u75E11h4JtNPjfmU03nW_6a8c0d78',
-            duration: 7195,
-            year: 2026,
-            genre: 'Melodic House',
-            festival: 'LIEF Festival',
-            stage: 'Main Stage',
-          },
-          {
-            id: '13JlFbJ4dtr8LF9MoKDUBT',
-            title: 'Generator Sessions Amsterdam',
-            artist: 'Collé',
-            coverArt: 'al-13JlFbJ4dtr8LF9MoKDUBT_6a8c0d79',
-            duration: 3383,
-            year: 2026,
-            genre: 'Melodic Techno',
-            festival: 'LIEF Festival',
-            stage: 'Main Stage',
-          },
-          {
-            id: '2zJiWzj9O26M2rwIL88Ymk',
-            title: 'ASOT Live Set',
-            artist: 'Mees Salomé',
-            coverArt: 'al-2zJiWzj9O26M2rwIL88Ymk_6a8c0d79',
-            duration: 4537,
-            year: 2026,
-            genre: 'Melodic House & Techno',
-            festival: 'LIEF Festival',
-            stage: 'Main Stage',
-          },
-          {
-            id: '2CujsIPDiTe4Nr20fGwrJW',
-            title: 'Colyn at Seismic Spring 2024 | Full Set',
-            artist: 'Colyn',
-            coverArt: 'al-2CujsIPDiTe4Nr20fGwrJW_6a8c0d79',
-            duration: 7128,
-            year: 2026,
-            genre: 'Melodic Techno',
-            festival: 'LIEF Festival',
-            stage: 'Main Stage',
-          },
-          {
-            id: '7DAIzfvTX4ZEK4ptk9ZwJX',
-            title: 'Agents Of Time Live At Tomorrowland (Belgium)',
-            artist: 'Agents of Time',
-            coverArt: 'al-7DAIzfvTX4ZEK4ptk9ZwJX_6a8c0d7a',
-            duration: 5324,
-            year: 2026,
-            genre: 'Melodic Techno',
-            festival: 'LIEF Festival',
-            stage: 'Main Stage',
-          },
-        ],
-      },
-      {
-        name: 'Tech House',
-        sets: [
-          {
-            id: '3wRT76RkmREeMixZqbe3US',
-            title: 'b2b aloïs @ Wine Only Rave',
-            artist: 'Cici Daze',
-            coverArt: 'al-3wRT76RkmREeMixZqbe3US_6a8c0d75',
-            duration: 3516,
-            year: 2026,
-            genre: 'Tech House',
-            festival: 'LIEF Festival',
-            stage: 'Tech House',
-          },
-          {
-            id: '7v86qxLGqxe9Ee7cYxWiur',
-            title: 'HOUSE SET @ JACKIES',
-            artist: 'St. David',
-            coverArt: 'al-7v86qxLGqxe9Ee7cYxWiur_6a8c0d75',
-            duration: 2711,
-            year: 2026,
-            genre: 'House',
-            festival: 'LIEF Festival',
-            stage: 'Tech House',
-          },
-          {
-            id: '7og57Z7PgLF5rjKGAOYVuI',
-            title: 'Live @ Colorado Charlie',
-            artist: 'Easttown',
-            coverArt: 'al-7og57Z7PgLF5rjKGAOYVuI_6a8c0d76',
-            duration: 4072,
-            year: 2026,
-            genre: 'Tech House',
-            festival: 'LIEF Festival',
-            stage: 'Tech House',
-          },
-          {
-            id: '7hc2Dzf8DI84Q1uXluXO0L',
-            title: 'Creamfields 2023 @ Beatport Live',
-            artist: 'Sarah Story',
-            coverArt: 'al-7hc2Dzf8DI84Q1uXluXO0L_6a8c0d76',
-            duration: 5497,
-            year: 2026,
-            genre: 'Tech House',
-            festival: 'LIEF Festival',
-            stage: 'Tech House',
-          },
-          {
-            id: '1zj52XfRYeUbqN1WL52TG7',
-            title: 'In The Haus: 001',
-            artist: 'Anil Aras',
-            coverArt: 'al-1zj52XfRYeUbqN1WL52TG7_6a8c0d77',
-            duration: 3814,
-            year: 2026,
-            genre: 'House / Tech House',
-            festival: 'LIEF Festival',
-            stage: 'Tech House',
-          },
-          {
-            id: '0DE4sloEOR9dbagwkuVhkf',
-            title: "b2b Michel de Hey @ Boothstock '24",
-            artist: 'Benny Rodrigues',
-            coverArt: 'al-0DE4sloEOR9dbagwkuVhkf_6a8c0d77',
-            duration: 6577,
-            year: 2026,
-            genre: 'Tech House',
-            festival: 'LIEF Festival',
-            stage: 'Tech House',
-          },
-        ],
-      },
-    ],
-  },
-  {
     name: 'Awakenings',
     slug: 'awakenings',
     logo: 'https://music.cyberspeeze.online/static/festivals/awakenings.jpg',
@@ -395,7 +244,7 @@ const DEFAULT_FESTIVALS: FestivalInfo[] = [
 
 export async function getFestivals(): Promise<FestivalInfo[]> {
   // 1. Check cache first
-  const cached = await get<FestivalInfo[]>('festivals', 'all_festivals');
+  const cached = await get<FestivalInfo[]>('festivals', 'all_festivals_v2');
   if (cached && cached.length > 0) {
     fetchFestivalsNetwork().catch(() => {});
     return cached;
@@ -413,7 +262,7 @@ async function fetchFestivalsNetwork(): Promise<FestivalInfo[]> {
     if (res && res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
-        await set('festivals', 'all_festivals', data, TTL.FESTIVAL);
+        await set('festivals', 'all_festivals_v2', data, TTL.FESTIVAL);
         return data;
       }
     }
@@ -463,24 +312,24 @@ async function fetchFestivalsNetwork(): Promise<FestivalInfo[]> {
       }
     }
 
-    await set('festivals', 'all_festivals', dynamicFestivals, TTL.FESTIVAL);
+    await set('festivals', 'all_festivals_v2', dynamicFestivals, TTL.FESTIVAL);
     return dynamicFestivals;
   } catch (err) {
     console.warn('Network fetch error for festivals, using defaults:', err);
-    await set('festivals', 'all_festivals', DEFAULT_FESTIVALS, TTL.FESTIVAL);
+    await set('festivals', 'all_festivals_v2', DEFAULT_FESTIVALS, TTL.FESTIVAL);
     return DEFAULT_FESTIVALS;
   }
 }
 
 export async function getFestivalDetail(nameOrSlug: string): Promise<FestivalInfo> {
-  const cached = await get<FestivalInfo>('festivals', `detail_${nameOrSlug}`);
+  const cached = await get<FestivalInfo>('festivals', `detail_v2_${nameOrSlug}`);
   if (cached) return cached;
 
   try {
     const res = await authenticatedFetch(`${BASE}/api/festivals/${encodeURIComponent(nameOrSlug)}`);
     if (res.ok) {
       const data = await res.json();
-      await set('festivals', `detail_${nameOrSlug}`, data, TTL.FESTIVAL);
+      await set('festivals', `detail_v2_${nameOrSlug}`, data, TTL.FESTIVAL);
       return data;
     }
   } catch {
@@ -494,7 +343,7 @@ export async function getFestivalDetail(nameOrSlug: string): Promise<FestivalInf
   );
 
   if (match) {
-    await set('festivals', `detail_${nameOrSlug}`, match, TTL.FESTIVAL);
+    await set('festivals', `detail_v2_${nameOrSlug}`, match, TTL.FESTIVAL);
     return match;
   }
 
@@ -502,7 +351,7 @@ export async function getFestivalDetail(nameOrSlug: string): Promise<FestivalInf
   const allFestivals = await getFestivals();
   for (const fest of allFestivals) {
     if (fest.slug === nameOrSlug.toLowerCase().trim()) {
-      await set('festivals', `detail_${nameOrSlug}`, fest, TTL.FESTIVAL);
+      await set('festivals', `detail_v2_${nameOrSlug}`, fest, TTL.FESTIVAL);
       return fest;
     }
   }
@@ -653,17 +502,6 @@ async function fetchRecentSetsNetwork(): Promise<SetInfo[]> {
 
   // Fallback sets
   const fallbackSets: SetInfo[] = [
-    {
-      id: '2tm2CHSBGk6EWeOPPr66Bj',
-      title: 'Dutch Pyramid Sunset DJ Set',
-      artist: 'Ninsa',
-      coverArt: 'al-2tm2CHSBGk6EWeOPPr66Bj_6a8c0d77',
-      duration: 5681,
-      year: 2026,
-      genre: 'Melodic Techno',
-      festival: 'LIEF Festival',
-      stage: 'Main Stage',
-    },
     {
       id: '4YuXo852caWq38j0yY9QvZ',
       title: 'SIDEPIECE LIVE @lollapalooza Perry Stage 2026',
