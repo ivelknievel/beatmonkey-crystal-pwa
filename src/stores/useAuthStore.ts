@@ -80,7 +80,11 @@ export const useAuthStore = create<AuthState>((set, get) => {
           const creds = await loadSubsonicCredentials();
           if (current !== revision) return;
           if (!creds?.user) {
-            revoke(); await persist(clearSaved); return;
+            // Absence is not proof that stored credentials were rejected: a cold
+            // start (or a storage read that raced document teardown) must not
+            // write a permanent revocation tombstone over a valid session.
+            set(signedOut);
+            return;
           }
           if (!await validateCredentials(creds.user, creds.pass)) {
             if (current === revision) { revoke(); await persist(clearSaved); }

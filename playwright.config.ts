@@ -14,7 +14,6 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:4175',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    launchOptions: { args: ['--no-sandbox'] },
   },
   webServer: {
     command: 'npm run preview -- --host 127.0.0.1 --port 4175 --strictPort',
@@ -25,5 +24,7 @@ export default defineConfig({
   projects: [
     { name: 'chromium-desktop', use: { ...devices['Desktop Chrome'], browserName: 'chromium' } },
     { name: 'chromium-mobile-layout', use: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 1, browserName: 'chromium' } },
+    { name: 'webkit-desktop', use: { ...devices['Desktop Safari'], browserName: 'webkit' } },
+    { name: 'webkit-mobile-layout', use: { viewport: { width: 390, height: 844 }, hasTouch: true, deviceScaleFactor: 1, browserName: 'webkit' } },
   ],
 });
