@@ -246,8 +246,9 @@ def login(req: AuthLoginRequest):
     else:
         if not req.id_token:
             raise HTTPException(status_code=400, detail="id_token field required")
+        client_id = req.client_id or os.getenv("GOOGLE_CLIENT_ID", "")
         google_user = verify_google_token(
-            req.id_token, req.client_id, expected_nonce=req.expected_nonce
+            req.id_token, client_id or None, expected_nonce=req.expected_nonce
         )
         if not google_user or not google_user.get("email"):
             raise HTTPException(status_code=401, detail="Invalid Google ID token")
