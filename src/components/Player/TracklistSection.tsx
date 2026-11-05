@@ -4,7 +4,7 @@ import { getTracklist } from '../../services/discoveryApi';
 import { TrackRow } from './TrackRow';
 import { WaveCurveCanvas } from './WaveCurveCanvas';
 import type { TrackCue } from '../../types';
-import { ListMusic, ChevronDown, Loader2, AlertCircle, Music, RefreshCw, Plus, X } from 'lucide-react';
+import { ListMusic, ChevronDown, Loader2, AlertCircle, Music, RefreshCw, Plus, X, Play, Pause, Disc } from 'lucide-react';
 import { AudioEngine } from '../../engine/AudioEngine';
 import { formatTime } from '../../utils/format';
 import { authenticatedFetch } from '../../services/authService';
@@ -25,13 +25,37 @@ function normalizeTracks(data: any): TrackCue[] {
       spotifyUri: t.spotifyUri,
       artworkUrl: t.artworkUrl ?? t.effectiveArtworkUrl,
       coverUrl: t.coverUrl,
+      durationSec: t.durationSec ?? t.duration ?? undefined,
     }));
   }
   return [];
 }
 
-export function TracklistSection() {
-  const [isOpen, setIsOpen] = useState(false);
+export interface TracklistSectionProps {
+  isOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTriggerButton?: boolean;
+}
+
+export function TracklistSection({
+  isOpen: controlledIsOpen,
+  onOpenChange,
+  hideTriggerButton = false,
+}: TracklistSectionProps = {}) {
+  const [internalIsOpen, setInternalIsOpen] = useState(false);
+  const isControlled = controlledIsOpen !== undefined;
+  const isOpen = isControlled ? controlledIsOpen : internalIsOpen;
+
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      if (!isControlled) {
+        setInternalIsOpen(open);
+      }
+      onOpenChange?.(open);
+    },
+    [isControlled, onOpenChange]
+  );
+
   const [tracklist, setTracklist] = useState<TrackCue[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,8 +68,35 @@ export function TracklistSection() {
   const currentTime = usePlayerStore(s => s.currentTime);
   const duration = usePlayerStore(s => s.duration);
   const currentSet = usePlayerStore(s => s.currentSet);
+  const isPlaying = usePlayerStore(s => s.isPlaying);
+  const status = usePlayerStore(s => s.status);
+  const togglePlay = usePlayerStore(s => s.togglePlay);
+  const setFullscreen = usePlayerStore(s => s.setFullscreen);
 
   const listRef = useRef<HTMLDivElement>(null);
+  const miniPlayerProgressRef = useRef<HTMLDivElement | null>(null);
+
+  // Update mini player progress bar
+  useEffect(() => {
+    if (!isOpen) return;
+    let animId: number;
+    const update = () => {
+      if (miniPlayerProgressRef.current) {
+        const cur = AudioEngine.getCurrentTime();
+        const dur = AudioEngine.getDuration();
+        if (dur > 0) {
+          const pct = Math.min(100, Math.max(0, (cur / dur) * 100));
+          miniPlayerProgressRef.current.style.width = `${pct}%`;
+        } else {
+          miniPlayerProgressRef.current.style.width = '0%';
+        }
+      }
+      animId = requestAnimationFrame(update);
+    };
+
+    animId = requestAnimationFrame(update);
+    return () => cancelAnimationFrame(animId);
+  }, [isOpen]);
 
   // Fetch tracklist when set changes
   useEffect(() => {
@@ -66,18 +117,38 @@ export function TracklistSection() {
       });
   }, [currentSetId, isOpen]);
 
-  // Auto-scroll naar actieve track
+  // Auto-scroll naar actieve track (bij verandering van cue index)
   useEffect(() => {
-    if (isOpen && activeCueIndex >= 0 && listRef.current) {
-      const children = listRef.current.children;
-      if (children[activeCueIndex]) {
-        (children[activeCueIndex] as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }
+    scrollToActiveTrack();
+  }, [activeCueIndex]);
+
+  // Scroll ook direct nadat tracklist geladen is (bij openen)
+  useEffect(() => {
+    if (isOpen && !loading && tracklist.length > 0 && activeCueIndex >= 0) {
+      // Korte timeout zodat DOM is gerenderd
+      const timer = setTimeout(() => scrollToActiveTrack(), 100);
+      return () => clearTimeout(timer);
     }
-  }, [activeCueIndex, isOpen]);
+  }, [isOpen, loading, tracklist.length]);
+
+  function scrollToActiveTrack() {
+    if (!listRef.current || activeCueIndex < 0) return;
+    const children = listRef.current.children;
+    if (children[activeCueIndex]) {
+      (children[activeCueIndex] as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
 
   const activeTrack = tracklist[activeCueIndex];
   const totalDurationSec = duration > 0 ? duration : 3600;
+
+  const miniPlayerTitle = activeTrack?.title || currentSet?.title || 'Beatmonkey Crystal';
+  const miniPlayerArtist = activeTrack?.artist || currentSet?.artist || 'Onbekende artiest';
+  const miniPlayerCover = currentSet?.coverArt
+    ? currentSet.coverArt.startsWith('http://') || currentSet.coverArt.startsWith('https://') || currentSet.coverArt.startsWith('/')
+      ? currentSet.coverArt
+      : `${BASE}/rest/getCoverArt.view?id=${encodeURIComponent(currentSet.coverArt)}&size=100`
+    : null;
 
   // Check incomplete (< 25% timestamps > 0)
   const incompleteTracklist = tracklist.length > 0 &&
@@ -133,37 +204,42 @@ export function TracklistSection() {
   return (
     <>
       {/* ── Toggle button ── */}
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors cursor-pointer"
-      >
-        <ListMusic size={16} />
-        Tracklist {tracklist.length > 0 && `(${tracklist.length})`}
-        <ChevronDown size={14} className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
-      </button>
+      {!hideTriggerButton && (
+        <button
+          onClick={() => handleOpenChange(!isOpen)}
+          className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors cursor-pointer"
+        >
+          <ListMusic size={16} />
+          Tracklist {tracklist.length > 0 && `(${tracklist.length})`}
+          <ChevronDown size={14} className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+        </button>
+      )}
 
       {/* ── Modal Overlay ── */}
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-end">
+        <div
+          className="fixed inset-0 z-50 flex items-end"
+          onClick={(e) => e.stopPropagation()}
+        >
           {/* Scrim */}
           <div
             className="absolute inset-0 bg-black/65 transition-opacity"
-            onClick={() => setIsOpen(false)}
+            onClick={() => handleOpenChange(false)}
           />
 
           {/* Sheet */}
           <div
-            className="relative w-full max-h-[88vh] rounded-t-[28px] overflow-hidden animate-slide-up"
+            className="relative w-full max-h-[88vh] rounded-t-[28px] overflow-hidden animate-slide-up flex flex-col"
             style={{ backgroundColor: 'rgba(12, 18, 30, 0.98)' }}
           >
             {/* Neon glow achtergronden */}
-            <div className="absolute top-[-40px] right-[-60px] w-[260px] h-[260px] rounded-full"
+            <div className="absolute top-[-40px] right-[-60px] w-[260px] h-[260px] rounded-full pointer-events-none"
               style={{
                 background: 'rgba(0, 229, 255, 0.18)',
                 filter: 'blur(90px)',
               }}
             />
-            <div className="absolute bottom-[40px] left-[-60px] w-[240px] h-[240px] rounded-full"
+            <div className="absolute bottom-[40px] left-[-60px] w-[240px] h-[240px] rounded-full pointer-events-none"
               style={{
                 background: 'rgba(255, 64, 129, 0.15)',
                 filter: 'blur(90px)',
@@ -171,11 +247,11 @@ export function TracklistSection() {
             />
 
             {/* Drag handle */}
-            <div className="flex justify-center pt-[10px] pb-1">
+            <div className="flex justify-center pt-[10px] pb-1 shrink-0">
               <div className="w-[42px] h-1 rounded-full bg-white/30" />
             </div>
 
-            <div className="relative px-4 pb-4 overflow-y-auto max-h-[calc(88vh-30px)]">
+            <div className="relative px-4 pb-4 overflow-y-auto flex-1 min-h-0">
               {/* ── HEADER ── */}
               <div className="flex items-start justify-between mb-2">
                 <div className="flex-1 min-w-0 pr-2">
@@ -212,8 +288,8 @@ export function TracklistSection() {
                 </div>
 
                 <button
-                  onClick={() => setIsOpen(false)}
-                  className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-white/8 hover:bg-white/15 transition-colors"
+                  onClick={() => handleOpenChange(false)}
+                  className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-white/8 hover:bg-white/15 transition-colors cursor-pointer"
                 >
                   <X size={18} className="text-white" />
                 </button>
@@ -344,24 +420,122 @@ export function TracklistSection() {
 
                   {/* Track list */}
                   <div ref={listRef} className="space-y-1.5 pb-4">
-                    {tracklist.map((track, i) => (
-                      <TrackRow
-                        key={i}
-                        track={track}
-                        isActive={i === activeCueIndex}
-                        trackNumber={i + 1}
-                        onSeek={() => {
-                          AudioEngine.seek(track.timeSec);
-                          usePlayerStore.getState().setActiveCueIndex(i);
-                        }}
-                        onShare={() => handleShare(track)}
-                        onSpotifySearch={() => handleSpotifySearch(track)}
-                      />
-                    ))}
+                    {tracklist.map((track, i) => {
+                      const isTrackActive = i === activeCueIndex;
+                      let playProgress = 0;
+
+                      if (isTrackActive) {
+                        const currentTrackTime = track.timeSec ?? track.timestamp ?? 0;
+                        let trackDuration = track.durationSec ?? 0;
+                        if (trackDuration <= 0) {
+                          if (i < tracklist.length - 1) {
+                            const nextTrack = tracklist[i + 1];
+                            const nextTrackTime = nextTrack.timeSec ?? nextTrack.timestamp ?? 0;
+                            trackDuration = nextTrackTime - currentTrackTime;
+                          } else {
+                            trackDuration = totalDurationSec - currentTrackTime;
+                          }
+                        }
+
+                        if (trackDuration > 0) {
+                          playProgress = Math.max(0, Math.min(1, (currentTime - currentTrackTime) / trackDuration));
+                        }
+                      }
+
+                      return (
+                        <TrackRow
+                          key={i}
+                          track={track}
+                          isActive={isTrackActive}
+                          playProgress={playProgress}
+                          trackNumber={i + 1}
+                          onSeek={() => {
+                            AudioEngine.seek(track.timeSec);
+                            usePlayerStore.getState().setActiveCueIndex(i);
+                          }}
+                          onShare={() => handleShare(track)}
+                          onSpotifySearch={() => handleSpotifySearch(track)}
+                        />
+                      );
+                    })}
                   </div>
                 </>
               )}
             </div>
+
+            {/* ── MiniPlayer Bar (Onderin Tracklist Overlay) ── */}
+            {currentSet && (
+              <div
+                onClick={() => {
+                  setFullscreen(true);
+                  handleOpenChange(false);
+                }}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    setFullscreen(true);
+                    handleOpenChange(false);
+                  }
+                }}
+                className="relative w-full h-15 bg-[var(--color-crystal-card)]/95 backdrop-blur-md border-t border-[var(--color-crystal-border)] flex items-center px-4 gap-3 cursor-pointer select-none transition-colors hover:bg-[var(--color-crystal-card)] z-20 shrink-0"
+                aria-label={`Mini-player: ${miniPlayerTitle} - ${miniPlayerArtist}`}
+              >
+                {/* Top progress line */}
+                <div className="absolute top-0 left-0 right-0 h-[2px] bg-white/10 overflow-hidden pointer-events-none">
+                  <div ref={miniPlayerProgressRef} className="h-full bg-[var(--color-crystal-cyan)] w-0 transition-none" />
+                </div>
+
+                {/* Cover image */}
+                <div className="relative w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-[var(--color-crystal-surface)] border border-[var(--color-crystal-border)] flex items-center justify-center">
+                  {miniPlayerCover ? (
+                    <img src={miniPlayerCover} alt={miniPlayerTitle} className="w-full h-full object-cover" loading="lazy" />
+                  ) : (
+                    <Disc className={`w-5 h-5 text-[var(--color-crystal-cyan)] ${isPlaying ? 'animate-spin' : ''}`} />
+                  )}
+                </div>
+
+                {/* Title / Artist */}
+                <div className="flex-1 min-w-0 flex flex-col justify-center">
+                  <p className="text-sm font-semibold text-white truncate leading-tight">{miniPlayerTitle}</p>
+                  <p className="text-xs text-gray-400 truncate leading-tight mt-0.5">{miniPlayerArtist}</p>
+                </div>
+
+                {/* Controls: Play/Pause & Tracklist */}
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      togglePlay();
+                    }}
+                    className="w-10 h-10 rounded-full flex items-center justify-center text-white hover:text-[var(--color-crystal-cyan)] active:scale-95 transition-all focus:outline-none cursor-pointer"
+                    aria-label={isPlaying ? 'Pauzeer' : 'Afspelen'}
+                  >
+                    {status === 'loading' ? (
+                      <Loader2 className="w-5 h-5 animate-spin text-[var(--color-crystal-cyan)]" />
+                    ) : isPlaying ? (
+                      <Pause className="w-5 h-5 fill-current" />
+                    ) : (
+                      <Play className="w-5 h-5 fill-current translate-x-0.5" />
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenChange(false);
+                    }}
+                    className="w-10 h-10 rounded-full flex items-center justify-center text-[var(--color-crystal-cyan)] hover:text-white active:scale-95 transition-all focus:outline-none cursor-pointer"
+                    aria-label="Sluit tracklist"
+                    title="Tracklist sluiten"
+                  >
+                    <ListMusic className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

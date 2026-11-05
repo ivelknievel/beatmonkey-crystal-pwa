@@ -19,6 +19,8 @@ export interface TrackCue {
   artist: string;
   timeSec: number;
   spotifyUri?: string;
+  durationSec?: number;
+  timestamp?: number;
   isActive?: boolean;
 }
 

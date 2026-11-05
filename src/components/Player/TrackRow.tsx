@@ -11,15 +11,9 @@ export interface TrackRowProps {
   onShare?: () => void;
   onSpotifySearch?: () => void;
   trackNumber: number;
+  playProgress?: number;
 }
 
-/**
- * Swipeable track item with LIVE indicator, equalizer, share, and Spotify support.
- * Mirrors BMC Android's CrystalTrackItem behavior.
- * - Swipe left → share
- * - Swipe right → Spotify search
- * - Click → seek
- */
 export function TrackRow({
   track,
   isActive,
@@ -27,6 +21,7 @@ export function TrackRow({
   onShare,
   onSpotifySearch,
   trackNumber,
+  playProgress = 0,
 }: TrackRowProps) {
   const [swipeOffset, setSwipeOffset] = useState(0);
   const touchStartX = useRef(0);
@@ -56,15 +51,12 @@ export function TrackRow({
 
   return (
     <div className="relative overflow-hidden rounded-lg select-none">
-      {/* Share background (left swipe) */}
       <div
         className="absolute inset-0 bg-gradient-to-r from-transparent via-cyan-500/40 to-purple-500/85 rounded-lg flex items-center justify-end pr-6 transition-opacity duration-200"
         style={{ opacity: swipeOffset < 0 ? Math.min(Math.abs(swipeOffset) / SWIPE_THRESHOLD, 1) : 0 }}
       >
         <Share2 size={20} className="text-white" />
       </div>
-
-      {/* Spotify background (right swipe) */}
       <div
         className="absolute inset-0 bg-gradient-to-r from-indigo-500/85 via-purple-500/40 to-transparent rounded-lg flex items-center pl-6 transition-opacity duration-200"
         style={{ opacity: swipeOffset > 0 ? Math.min(swipeOffset / SWIPE_THRESHOLD, 1) : 0 }}
@@ -72,21 +64,17 @@ export function TrackRow({
         <Music2 size={20} className="text-white" />
       </div>
 
-      {/* Foreground card */}
       <div
         onClick={onSeek}
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            onSeek();
-          }
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSeek(); }
         }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
-        className={`flex items-center gap-2 py-2 px-3 rounded-lg cursor-pointer transition-[transform,colors] duration-200 select-none relative ${
+        className={`relative flex items-center gap-2 py-2 px-3 rounded-lg cursor-pointer transition-[transform,colors] duration-200 select-none ${
           isActive
             ? 'bg-[#132036] border border-[var(--color-crystal-cyan)]'
             : 'bg-[#0F172A] border border-white/5 hover:bg-[#0F172A]/80'
@@ -96,7 +84,6 @@ export function TrackRow({
           transition: isDragging.current ? 'none' : 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
         }}
       >
-        {/* Track number badge */}
         <div
           className={`w-[34px] h-[34px] rounded-lg flex items-center justify-center flex-shrink-0 ${
             isActive
@@ -109,13 +96,8 @@ export function TrackRow({
           </span>
         </div>
 
-        {/* Title & Artist */}
         <div className="flex-1 min-w-0">
-          <p
-            className={`text-sm truncate leading-snug ${
-              isActive ? 'font-bold text-white' : 'font-medium text-gray-200'
-            }`}
-          >
+          <p className={`text-sm truncate leading-snug ${isActive ? 'font-bold text-white' : 'font-medium text-gray-200'}`}>
             {track.title}
           </p>
           {track.artist && (
@@ -125,7 +107,6 @@ export function TrackRow({
           )}
         </div>
 
-        {/* Active indicators */}
         {isActive && (
           <>
             <EqualizerIndicator color="#FF4081" />
@@ -135,7 +116,6 @@ export function TrackRow({
           </>
         )}
 
-        {/* Timestamp */}
         <div
           className={`px-1.5 py-1 rounded-md flex-shrink-0 ${
             isActive
@@ -143,21 +123,13 @@ export function TrackRow({
               : 'bg-white/5 border border-white/10'
           }`}
         >
-          <span
-            className={`text-[11px] font-mono font-bold ${
-              isActive ? 'text-[var(--color-crystal-cyan)]' : 'text-gray-400'
-            }`}
-          >
+          <span className={`text-[11px] font-mono font-bold ${isActive ? 'text-[var(--color-crystal-cyan)]' : 'text-gray-400'}`}>
             {formatTime(track.timeSec)}
           </span>
         </div>
 
-        {/* Spotify link (fallback) */}
         {track.spotifyUri && (
-          <a
-            href={track.spotifyUri}
-            target="_blank"
-            rel="noopener noreferrer"
+          <a href={track.spotifyUri} target="_blank" rel="noopener noreferrer"
             className="text-emerald-400 hover:text-emerald-300 p-1 rounded hover:bg-white/5 transition-colors flex-shrink-0"
             onClick={(e) => e.stopPropagation()}
             aria-label={`Open ${track.title} on Spotify`}
@@ -166,11 +138,23 @@ export function TrackRow({
           </a>
         )}
 
-        {/* Right chevron for desktop hint */}
         {!track.spotifyUri && (
           <ChevronRight size={14} className="text-gray-600 flex-shrink-0" />
         )}
       </div>
+
+      {/* Progress bar */}
+      {isActive && playProgress > 0 && (
+        <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-white/10 rounded-b-lg overflow-hidden">
+          <div
+            className="h-full rounded-r-full transition-all duration-300 ease-linear"
+            style={{
+              width: `${Math.min(100, playProgress * 100)}%`,
+              background: 'linear-gradient(90deg, #00E5FF, #FF4081)',
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }

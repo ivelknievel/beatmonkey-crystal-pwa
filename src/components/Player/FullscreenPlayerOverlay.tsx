@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ChevronDown, ListPlus, Disc3, Sparkles } from 'lucide-react';
+import { ChevronDown, ListPlus, Disc3, Sparkles, Share2 } from 'lucide-react';
 import { usePlayerStore } from '../../stores/playerStore';
 import { getCoverUrl } from '../../services/subsonic';
 import { FavoriteButton } from '../Shared/FavoriteButton';
@@ -14,6 +14,7 @@ export function FullscreenPlayerOverlay() {
   const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
 
   const currentSet = usePlayerStore((s) => s.currentSet);
   const setFullscreen = usePlayerStore((s) => s.setFullscreen);
@@ -42,6 +43,8 @@ export function FullscreenPlayerOverlay() {
       if (e.key === 'Escape') {
         if (isQueueOpen) {
           setIsQueueOpen(false);
+        } else if (isShareDialogOpen) {
+          setIsShareDialogOpen(false);
         } else {
           handleClose();
         }
@@ -49,7 +52,7 @@ export function FullscreenPlayerOverlay() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleClose, isQueueOpen]);
+  }, [handleClose, isQueueOpen, isShareDialogOpen]);
 
   const title = currentSet?.title || 'Geen set geselecteerd';
   const artist = currentSet?.artist || 'Onbekende artiest';
@@ -66,6 +69,33 @@ export function FullscreenPlayerOverlay() {
     : null;
 
   const isVisible = isMounted && !isClosing;
+
+  // Format time as mm:ss
+  const formatTime = (seconds: number): string => {
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  // Share handler
+  const handleShare = (fromCurrent: boolean) => {
+    const currentTime = AudioEngine.getCurrentTime();
+    const timeStr = formatTime(currentTime);
+    const currentSecs = Math.floor(currentTime);
+    const setId = currentSet?.id || '';
+    const shareText = fromCurrent
+      ? `Luister naar ${title} van ${artist} op Beatmonkey Crystal vanaf ${timeStr}!\n\nhttps://music.cyberspeeze.online/go/album/${setId}?t=${currentSecs}`
+      : `Luister naar ${title} van ${artist} op Beatmonkey Crystal!\n\nhttps://music.cyberspeeze.online/go/album/${setId}`;
+
+    if (navigator.share) {
+      navigator.share({ title: 'Deel Liveset', text: shareText });
+    } else {
+      navigator.clipboard.writeText(shareText).then(() => {
+        alert('📋 Link gekopieerd naar klembord!');
+      });
+    }
+    setIsShareDialogOpen(false);
+  };
 
   return (
     <div
@@ -85,6 +115,46 @@ export function FullscreenPlayerOverlay() {
             className="w-full h-full object-cover scale-125 blur-3xl"
           />
           <div className="absolute inset-0 bg-radial from-transparent via-[#0a0a0f]/80 to-[#0a0a0f]" />
+        </div>
+      )}
+
+      {/* Share Dialog */}
+      {isShareDialogOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setIsShareDialogOpen(false)}
+        >
+          <div
+            className="bg-[#141C2E] rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl border border-white/10"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-xl font-bold text-[var(--color-crystal-cyan)] mb-1">Liveset Delen</h3>
+            <p className="text-sm text-gray-300 mb-2">Kies hoe je deze liveset wilt delen:</p>
+            <p className="text-xs text-gray-500 mb-4">
+              Huidig tijdstip: {formatTime(AudioEngine.getCurrentTime())}
+            </p>
+
+            <button
+              onClick={() => handleShare(true)}
+              className="w-full py-3 px-4 rounded-xl bg-[var(--color-crystal-cyan)] text-[#0F172A] font-bold text-sm mb-3 hover:opacity-90 transition-opacity cursor-pointer"
+            >
+              Vanaf dit moment ({formatTime(AudioEngine.getCurrentTime())})
+            </button>
+
+            <button
+              onClick={() => handleShare(false)}
+              className="w-full py-3 px-4 rounded-xl border border-gray-500 text-white font-semibold text-sm mb-4 hover:bg-white/5 transition-colors cursor-pointer"
+            >
+              Vanaf het begin
+            </button>
+
+            <button
+              onClick={() => setIsShareDialogOpen(false)}
+              className="w-full text-center text-gray-500 text-sm hover:text-gray-300 transition-colors cursor-pointer"
+            >
+              Annuleren
+            </button>
+          </div>
         </div>
       )}
 
@@ -109,6 +179,15 @@ export function FullscreenPlayerOverlay() {
           </div>
 
           <div className="flex items-center gap-1">
+            {/* Share button */}
+            <button
+              type="button"
+              onClick={() => setIsShareDialogOpen(true)}
+              className="w-10 h-10 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-gray-300 hover:text-[var(--color-crystal-cyan)] transition-colors cursor-pointer"
+              aria-label="Deel liveset"
+            >
+              <Share2 size={20} />
+            </button>
             {currentSet?.id && <FavoriteButton setId={currentSet.id} />}
             <button
               type="button"

@@ -1,4 +1,4 @@
-const CACHE = 'beatmonkey-crystal-v18';
+const CACHE = 'beatmonkey-crystal-v20';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

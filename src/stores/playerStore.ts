@@ -349,6 +349,21 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     }
     const updatedQueue = queue.map((s) => (s.id === setId ? { ...s, tracklist } : s));
     set({ queue: updatedQueue });
+
+    // Herbereken activeCueIndex op basis van currentTime + nieuwe tracklist
+    if (tracklist && tracklist.length > 0) {
+      let lo = 0, hi = tracklist.length - 1;
+      const time = get().currentTime;
+      while (lo <= hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        if (time < tracklist[mid].timeSec) hi = mid - 1;
+        else lo = mid + 1;
+      }
+      const newActiveCue = Math.max(0, lo - 1);
+      if (get().activeCueIndex !== newActiveCue) {
+        set({ activeCueIndex: newActiveCue });
+      }
+    }
   },
 }));
 

@@ -62,6 +62,12 @@ export function SettingsPage() {
 
       {/* Google Account Profile */}
       <UserProfile />
+
+      {/* Versie */}
+      <div className="text-center py-6">
+        <p className="text-xs text-gray-500">Versie 20</p>
+        <p className="text-xs text-gray-600 mt-1">© 2026</p>
+      </div>
     </div>
   );
 }
