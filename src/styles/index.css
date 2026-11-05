@@ -23,16 +23,19 @@ html, body, #root {
 /* Form controls stay readable and do not request iPhone focus zoom. */
 input, select, textarea { font-size: 16px; }
 :focus-visible { outline: 2px solid #00E5FF; outline-offset: 3px; }
+/* Update notice: top placement keeps the bottom navigation and mini-player usable.
+   A bottom-anchored notice covered the tab bar and swallowed every tap. */
 .pwa-update-prompt {
   position: fixed;
   z-index: 100;
   left: max(1rem, env(safe-area-inset-left, 0px));
   right: max(1rem, env(safe-area-inset-right, 0px));
-  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  top: calc(0.75rem + env(safe-area-inset-top, 0px));
   padding: 1rem;
   border: 1px solid #00E5FF;
   border-radius: 1rem;
   background: #12121f;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .45);
 }
 /* QueueSheet is viewport-fixed: its parent player's padding cannot protect it. */
 .queue-focus-scope > div > div:nth-child(2) {
