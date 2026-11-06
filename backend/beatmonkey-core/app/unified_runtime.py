@@ -27,7 +27,7 @@ from app.session_routes import create_session_router
 logger = logging.getLogger(__name__)
 
 NAVIDROME_DB_PATH = os.getenv("NAVIDROME_DB_PATH", "/navidrome_data/navidrome.db")
-NAVIDROME_INTERNAL_PING_URL = "http://navidrome:4533/rest/ping.view"
+NAVIDROME_INTERNAL_PING_URL = "https://music.cyberspeeze.online/rest/ping.view"
 
 
 class InMemoryRateLimiter:
@@ -139,7 +139,7 @@ async def verify_navidrome_password(
 ) -> Optional[Dict[str, Any]]:
     """Verify credentials via fixed internal Navidrome Subsonic ping.
 
-    POST form u, p, v=1.16.1, c=beatmonkey, f=json to http://navidrome:4533/rest/ping.view.
+    POST form u, p, v=1.16.1, c=beatmonkey, f=json to https://music.cyberspeeze.online/rest/ping.view.
     Timeout 8.0s, max connections 4. No arbitrary user-supplied host.
     Requires subsonic-response.status == 'ok', then exact username DB lookup.
     """
