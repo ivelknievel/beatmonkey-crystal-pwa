@@ -7,6 +7,7 @@ import {
   type YoutubeJob,
   type JobStatus,
 } from '../services/youtubeDownloads';
+import { invalidateDiscoveryCache } from '../services/discoveryApi';
 import { useAuthStore } from '../stores/useAuthStore';
 
 const DUTCH_STATUS_LABELS: Record<JobStatus, string> = {
@@ -64,6 +65,16 @@ export function YouTubeDownloadPanel() {
   useEffect(() => {
     currentScopeRef.current = accountScope;
   }, [accountScope]);
+
+  const completedJobsRef = useRef(new Set<string>());
+  useEffect(() => { completedJobsRef.current.clear(); }, [accountScope]);
+  useEffect(() => {
+    if (!accountScope || useAuthStore.getState().accountScope !== accountScope) return;
+    const completed = jobs.filter(job => job.status === 'completed' && !completedJobsRef.current.has(job.id));
+    if (!completed.length) return;
+    completed.forEach(job => completedJobsRef.current.add(job.id));
+    void invalidateDiscoveryCache('all');
+  }, [jobs, accountScope]);
 
   // Account-scoped draft key
   const draftKey = accountScope ? `${DRAFT_STORAGE_PREFIX}${accountScope}` : null;

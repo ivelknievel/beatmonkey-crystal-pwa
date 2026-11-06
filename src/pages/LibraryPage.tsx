@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Users, SearchX } from 'lucide-react';
-import { getDJs } from '../services/discoveryApi';
+import { getDJs, subscribeLibrary, getAccountGeneration } from '../services/discoveryApi';
 import { usePlayerStore } from '../stores/playerStore';
 import { SearchBar } from '../components/Library/SearchBar';
 import { AlphabeticalIndex } from '../components/Library/AlphabeticalIndex';
@@ -17,22 +17,24 @@ export function LibraryPage() {
   const setArtists = usePlayerStore((s) => s.setArtists);
 
   useEffect(() => {
-    let isMounted = true;
-    async function load() {
-      try {
-        const djs = await getDJs();
-        if (isMounted) {
-          setArtists(djs);
-          setLoading(false);
-        }
-      } catch (err) {
-        console.error('Failed to load DJs:', err);
-        if (isMounted) setLoading(false);
-      }
-    }
-    load();
+    let mounted = true;
+    const unsubscribe = subscribeLibrary(djs => { setArtists(djs); setLoading(false); });
+    const load = async () => {
+      const generation = getAccountGeneration();
+      try { await getDJs(); } catch { /* Retain cached content offline. */ }
+      finally { if (mounted && generation === getAccountGeneration()) setLoading(false); }
+    };
+    void load();
+    const foreground = () => { if (!document.hidden) void load(); };
+    document.addEventListener('visibilitychange', foreground);
+    window.addEventListener('focus', foreground);
+    window.addEventListener('online', foreground);
     return () => {
-      isMounted = false;
+      mounted = false;
+      unsubscribe();
+      document.removeEventListener('visibilitychange', foreground);
+      window.removeEventListener('focus', foreground);
+      window.removeEventListener('online', foreground);
     };
   }, [setArtists]);
 

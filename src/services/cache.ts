@@ -76,10 +76,12 @@ export async function set<T>(
   store: StoreName,
   key: string,
   data: T,
-  ttlMs?: number
+  ttlMs?: number,
+  isCurrent: () => boolean = () => true
 ): Promise<void> {
   try {
     const db = await getDb();
+    if (!isCurrent()) return;
     const ttl = ttlMs !== undefined ? ttlMs : DEFAULT_TTLS[store];
     const entry: CacheEntry<T> = {
       data,

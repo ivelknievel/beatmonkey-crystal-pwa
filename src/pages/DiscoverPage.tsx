@@ -1,6 +1,6 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { Disc3, PartyPopper, AlertCircle, RotateCcw } from 'lucide-react';
-import { getFestivals, getRecentSets } from '../services/discoveryApi';
+import { getFestivals, getRecentSets, subscribeRecentSets, getAccountGeneration } from '../services/discoveryApi';
 import { usePlayerStore } from '../stores/playerStore';
 import { FestivalCarousel } from '../components/Discover/FestivalCarousel';
 import { RecentCarousel } from '../components/Discover/RecentCarousel';
@@ -16,31 +16,44 @@ export function DiscoverPage() {
   const setFestivals = usePlayerStore((s) => s.setFestivals);
   const setRecentSets = usePlayerStore((s) => s.setRecentSets);
 
+  const mounted = useRef(false);
   const loadData = useCallback(async () => {
-    setLoading(true);
+    const generation = getAccountGeneration();
     setError(null);
     try {
-      const [festList, setsList] = await Promise.all([
-        getFestivals(),
+      await Promise.all([
+        getFestivals().then(list => {
+          if (mounted.current && generation === getAccountGeneration()) setFestivals(list || []);
+        }),
         getRecentSets(),
       ]);
-
-      if ((!festList || festList.length === 0) && (!setsList || setsList.length === 0)) {
-        throw new Error('Data niet beschikbaar');
-      }
-      setFestivals(festList || []);
-      setRecentSets(setsList || []);
-      setLoading(false);
-    } catch (err: any) {
-      console.error('DiscoverPage load error:', err);
-      setError(err?.message || 'Data niet beschikbaar');
-      setLoading(false);
+    } catch {
+      // Existing cached content remains visible offline.
+    } finally {
+      if (mounted.current && generation === getAccountGeneration()) setLoading(false);
     }
-  }, [setFestivals, setRecentSets]);
+  }, [setFestivals]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    mounted.current = true;
+    const unsubscribe = subscribeRecentSets(sets => {
+      setRecentSets(sets);
+      setLoading(false);
+      setError(null);
+    });
+    void loadData();
+    const foreground = () => { if (!document.hidden) void loadData(); };
+    document.addEventListener('visibilitychange', foreground);
+    window.addEventListener('focus', foreground);
+    window.addEventListener('online', foreground);
+    return () => {
+      mounted.current = false;
+      unsubscribe();
+      document.removeEventListener('visibilitychange', foreground);
+      window.removeEventListener('focus', foreground);
+      window.removeEventListener('online', foreground);
+    };
+  }, [loadData, setRecentSets]);
 
   const spotlightFestival = festivals[0];
 

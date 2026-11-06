@@ -1,6 +1,6 @@
 import { authenticatedFetch } from './authService';
 import type { ArtistInfo, FestivalInfo, SetInfo, StageInfo, TrackCue } from '../types';
-import { get, set, TTL } from './cache';
+import { get, set, del, TTL, type StoreName } from './cache';
 import { getCoverUrl, getAlbumList, getSearch3 } from './subsonic';
 
 const BASE = 'https://music.cyberspeeze.online';
@@ -445,180 +445,136 @@ function parseTime(str: string): number {
 }
 
 
-export async function getRecentSets(): Promise<SetInfo[]> {
-  const cached = await get<SetInfo[]>('sets', 'recent_sets_v2');
-  if (cached && cached.length > 0) {
-    fetchRecentSetsNetwork().catch(() => {});
-    return cached;
+// Account-scoped stale-while-revalidate resources. Subscribers receive cache and
+// network results; callers retaining the Promise API remain compatible.
+let discoveryScope: string | null = null;
+let discoveryGeneration = 0;
+export function getAccountGeneration(): number { return discoveryGeneration; }
+export function getAccountScopedKey(base: string, scope = discoveryScope): string {
+  return `${base}:${scope ?? 'signed-out'}`;
+}
+export function setAccountScope(scope: string | null): void {
+  if (scope === discoveryScope) return;
+  discoveryScope = scope;
+  discoveryGeneration++;
+  recentResource.reset();
+  libraryResource.reset();
+}
+
+function resource<T>(store: StoreName, key: string, fetcher: () => Promise<T[]>) {
+  let revision = 0;
+  let publication = 0;
+  let inflight: Promise<T[]> | null = null;
+  let barrier: Promise<void> = Promise.resolve();
+  const listeners = new Set<{ generation: number; notify: (value: T[]) => void }>();
+  const publish = (value: T[]) => {
+    publication++;
+    for (const listener of listeners) {
+      if (listener.generation === discoveryGeneration) listener.notify(value);
+    }
+  };
+  function refresh(): Promise<T[]> {
+    if (inflight) return inflight;
+    const generation = discoveryGeneration;
+    const requestRevision = revision;
+    const cacheKey = getAccountScopedKey(key);
+    const current = () => generation === discoveryGeneration && requestRevision === revision;
+    const task = (async () => {
+      await barrier;
+      if (!current()) return [];
+      const value = await fetcher();
+      if (!current()) return [];
+      // Publish before persistence, with no async gap across the generation check.
+      publish(value);
+      await set(store, cacheKey, value, undefined, current);
+      return current() ? value : [];
+    })();
+    inflight = task;
+    void task.finally(() => { if (inflight === task) inflight = null; }).catch(() => {});
+    return task;
   }
-  return fetchRecentSetsNetwork();
+  return {
+    subscribe(notify: (value: T[]) => void) {
+      const listener = { generation: discoveryGeneration, notify };
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+    async load(): Promise<T[]> {
+      const generation = discoveryGeneration;
+      const requestRevision = revision;
+      const published = publication;
+      const cacheKey = getAccountScopedKey(key);
+      await barrier;
+      const cached = await get<T[]>(store, cacheKey);
+      if (generation !== discoveryGeneration || requestRevision !== revision) return [];
+      if (cached !== null) {
+        if (published === publication) publish(cached);
+        void refresh().catch(() => {}); // Offline must not replace cached data.
+        return cached;
+      }
+      return refresh();
+    },
+    refresh,
+    reset() { revision++; inflight = null; },
+    async invalidate() {
+      revision++;
+      inflight = null;
+      const generation = discoveryGeneration;
+      const requestRevision = revision;
+      const cacheKey = getAccountScopedKey(key);
+      barrier = barrier.catch(() => {}).then(() => del(store, cacheKey));
+      await barrier;
+      if (generation === discoveryGeneration && requestRevision === revision &&
+          [...listeners].some(l => l.generation === generation)) {
+        await refresh().catch(() => {});
+      }
+    },
+  };
 }
 
 async function fetchRecentSetsNetwork(): Promise<SetInfo[]> {
-  try {
-    const subsonicRes = await getAlbumList('newest', { size: 20 }).catch(() => null);
-    const albums = (subsonicRes as any)?.albumList2?.album || (subsonicRes as any)?.albumList?.album;
-    if (albums && Array.isArray(albums) && albums.length > 0) {
-      const sets: SetInfo[] = albums.map((a: any) => ({
-        id: a.id,
-        title: a.title || a.name || 'Live Set',
-        artist: a.artist || 'Onbekende DJ',
-        coverArt: getCoverUrl(a.coverArt || a.id, 300),
-        duration: a.duration || 3600,
-        year: a.year || 2026,
-        genre: a.genre || 'Electronic',
-        festival: a.album || a.parent || 'Festival Live',
-      }));
-      await set('sets', 'recent_sets_v2', sets, TTL.SET);
-      return sets;
-    }
-  } catch (err) {
-    console.warn('Error fetching recent sets from Subsonic:', err);
+  const generation = discoveryGeneration;
+  const response = await getAlbumList('newest', { size: 20 }).catch(() => null);
+  if (generation !== discoveryGeneration) throw new Error('Account changed');
+  let albums = (response as any)?.albumList2?.album ?? (response as any)?.albumList?.album;
+  if (!Array.isArray(albums)) {
+    const fallback = await authenticatedFetch(`${BASE}/api/navidrome/recent-albums`);
+    if (!fallback.ok) throw new Error('Recent sets unavailable');
+    const data = await fallback.json();
+    if (!Array.isArray(data.albums)) throw new Error('Invalid recent sets response');
+    albums = data.albums;
   }
-
-  try {
-    const res = await authenticatedFetch(`${BASE}/api/navidrome/recent-albums`);
-    if (res.ok) {
-      const data = await res.json();
-      const albums = data.albums || [];
-      if (albums.length > 0) {
-        const sets: SetInfo[] = albums.map((a: any) => ({
-          id: a.id,
-          title: a.name || 'Live Set',
-          artist: a.artist || 'Various Artists',
-          coverArt: getCoverUrl(a.coverArt || a.id, 300),
-          duration: 3600,
-          year: a.year || 2026,
-          genre: 'Electronic',
-          festival: a.name?.includes('EDC') ? 'EDC Las Vegas' : a.name?.includes('Lollapalooza') ? 'Lollapalooza' : 'Festival Live',
-        }));
-        await set('sets', 'recent_sets_v2', sets, TTL.SET);
-        return sets;
-      }
-    }
-  } catch (err) {
-    console.warn('Error fetching recent sets from API:', err);
-  }
-
-  // Fallback sets
-  const fallbackSets: SetInfo[] = [
-    {
-      id: '4YuXo852caWq38j0yY9QvZ',
-      title: 'SIDEPIECE LIVE @lollapalooza Perry Stage 2026',
-      artist: 'SIDEPIECE',
-      coverArt: 'al-4YuXo852caWq38j0yY9QvZ_6a8b4d3c',
-      duration: 2633,
-      year: 2026,
-      genre: 'Tech House',
-      festival: 'Lollapalooza',
-      stage: 'Perry Stage',
-    },
-    {
-      id: '4N4a2RqFogK4n8XcyYWZWx',
-      title: 'Walker & Royce B2B VNSSA Live at EDC Las Vegas 2026',
-      artist: 'Walker & Royce B2B VNSSA',
-      coverArt: 'al-4N4a2RqFogK4n8XcyYWZWx_6a8b2620',
-      duration: 2699,
-      year: 2026,
-      genre: 'Tech House',
-      festival: 'EDC Las Vegas',
-      stage: 'circuitGROUNDS',
-    },
-    {
-      id: '4363Gd0agyrEW96xDYhNIh',
-      title: 'Charlotte de Witte - EDC Las Vegas 2026',
-      artist: 'Charlotte de Witte',
-      coverArt: 'al-4363Gd0agyrEW96xDYhNIh_6a7ecb9c',
-      duration: 3502,
-      year: 2026,
-      genre: 'Techno',
-      festival: 'EDC Las Vegas',
-      stage: 'kineticFIELD',
-    },
-  ];
-
-  await set('sets', 'recent_sets_v2', fallbackSets, TTL.SET);
-  return fallbackSets;
-}
-
-export async function getDJs(): Promise<ArtistInfo[]> {
-  const cached = await get<ArtistInfo[]>('artists', 'all_djs');
-  if (cached && cached.length > 0) {
-    fetchDJsNetwork().catch(() => {});
-    return cached;
-  }
-  return fetchDJsNetwork();
+  return albums.map((a: any) => ({
+    id: a.id, title: a.title || a.name || 'Live Set',
+    artist: a.artist || 'Onbekende DJ', coverArt: getCoverUrl(a.coverArt || a.id, 300),
+    duration: a.duration || 3600, year: a.year || 2026,
+    genre: a.genre || 'Electronic', festival: a.album || a.parent || 'Festival Live',
+  }));
 }
 
 async function fetchDJsNetwork(): Promise<ArtistInfo[]> {
-  try {
-    const res = await authenticatedFetch(`${BASE}/api/discover/djs`);
-    if (res.ok) {
-      const data = await res.json();
-      const djList = data.djs || [];
-      if (djList.length > 0) {
-        const artists: ArtistInfo[] = djList.map((d: any) => ({
-          id: d.id || d.dj_name.toLowerCase().replace(/\s+/g, '-'),
-          name: d.dj_name,
-          image: d.image_url || d.logo_url || 'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=600&auto=format&fit=crop&q=80',
-          bio: d.bio || undefined,
-          genres: d.genres ? d.genres.split(',').map((g: string) => g.trim()).filter(Boolean) : ['Electronic'],
-          setCount: d.liveset_count || 1,
-        }));
-        await set('artists', 'all_djs', artists, TTL.ARTIST);
-        return artists;
-      }
-    }
-  } catch (err) {
-    console.warn('Error fetching DJs from API:', err);
-  }
-
-  // Fallback DJs
-  const fallbackDJs: ArtistInfo[] = [
-    {
-      id: 'reinier-zonneveld',
-      name: 'Reinier Zonneveld',
-      image: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&auto=format&fit=crop&q=80',
-      bio: 'Nederlandse live techno artiest en producer bekend om zijn energieke all-night live sets met analoge synthesizers en drummachines.',
-      genres: ['Techno', 'Acid Techno', 'Live Act'],
-      setCount: 4,
-    },
-    {
-      id: 'charlotte-de-witte',
-      name: 'Charlotte de Witte',
-      image: 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=600&auto=format&fit=crop&q=80',
-      bio: 'Belgische techno DJ en oprichter van het KNTXT label, bekend om haar donkere, stuwende peak-time techno sounds.',
-      genres: ['Techno', 'Peak Time Techno', 'Acid'],
-      setCount: 6,
-    },
-    {
-      id: 'mau-p',
-      name: 'Mau P',
-      image: 'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=600&auto=format&fit=crop&q=80',
-      bio: 'Wereldwijde tech house sensatie bekend van hits als "Drugs From Amsterdam", "Gimme That Bounce" en "Metro".',
-      genres: ['Tech House', 'House'],
-      setCount: 3,
-    },
-    {
-      id: 'amelie-lens',
-      name: 'Amelie Lens',
-      image: 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=600&auto=format&fit=crop&q=80',
-      bio: "Belgische techno superster, oprichter van het Lenske label en resident van 's werelds grootste festivals.",
-      genres: ['Techno', 'Hard Techno'],
-      setCount: 5,
-    },
-    {
-      id: 'armin-van-buuren',
-      name: 'Armin van Buuren',
-      image: 'https://images.unsplash.com/photo-1429962714451-bb934ecdc4ec?w=600&auto=format&fit=crop&q=80',
-      bio: 'Legendarische Nederlandse trance DJ, 5-voudig nummer 1 DJ van de wereld en presentator van A State Of Trance.',
-      genres: ['Trance', 'Progressive Trance', 'EDM'],
-      setCount: 8,
-    },
-  ];
-
-  await set('artists', 'all_djs', fallbackDJs, TTL.ARTIST);
-  return fallbackDJs;
+  const res = await authenticatedFetch(`${BASE}/api/discover/djs`);
+  if (!res.ok) throw new Error('DJ library unavailable');
+  const data = await res.json();
+  if (!Array.isArray(data.djs)) throw new Error('Invalid DJ library response');
+  return data.djs.map((d: any) => ({
+    id: d.id || d.dj_name.toLowerCase().replace(/\s+/g, '-'),
+    name: d.dj_name, image: d.image_url || d.logo_url || '', bio: d.bio || undefined,
+    genres: d.genres ? d.genres.split(',').map((g: string) => g.trim()).filter(Boolean) : ['Electronic'],
+    setCount: d.liveset_count || 1,
+  }));
+}
+const recentResource = resource<SetInfo>('sets', 'recent_sets_v2', fetchRecentSetsNetwork);
+const libraryResource = resource<ArtistInfo>('artists', 'all_djs', fetchDJsNetwork);
+export const subscribeRecentSets = recentResource.subscribe;
+export const subscribeLibrary = libraryResource.subscribe;
+export const getRecentSets = recentResource.load;
+export const getDJs = libraryResource.load;
+export async function invalidateDiscoveryCache(target: 'recent' | 'library' | 'all' = 'all'): Promise<void> {
+  await Promise.all([
+    target !== 'library' ? recentResource.invalidate() : Promise.resolve(),
+    target !== 'recent' ? libraryResource.invalidate() : Promise.resolve(),
+  ]);
 }
 
 export async function getDJDetail(djIdOrName: string): Promise<{ artist: ArtistInfo; sets: SetInfo[] }> {
