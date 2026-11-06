@@ -7,7 +7,7 @@ import type { TrackCue } from '../../types';
 import { ListMusic, ChevronDown, Loader2, AlertCircle, Music, RefreshCw, Plus, X, Play, Pause, Disc } from 'lucide-react';
 import { AudioEngine } from '../../engine/AudioEngine';
 import { formatTime } from '../../utils/format';
-import { buildShareUrl, shareLink } from '../../utils/shareLinks';
+import { shareLink, composeShareText } from '../../utils/shareLinks';
 import { authenticatedFetch } from '../../services/authService';
 
 const BASE = 'https://music.cyberspeeze.online';
@@ -229,7 +229,12 @@ export function TracklistSection({
   const handleShare = useCallback(async (track: TrackCue) => {
     if (!currentSet) return;
     try {
-      const result = await shareLink({ title: 'Deel Track', text: `${track.artist || ''} - ${track.title}`, url: buildShareUrl(currentSet, track.timeSec) });
+      const text = composeShareText({
+        set: currentSet,
+        seconds: track.timeSec,
+        cue: track,
+      });
+      const result = await shareLink({ title: 'Deel Track', text });
       setShareMessage(result === 'copied' ? 'Link gekopieerd.' : '');
     } catch { setShareMessage('Delen is niet gelukt. Probeer opnieuw.'); }
   }, [currentSet]);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { buildShareUrl, shareLink } from '../../utils/shareLinks';
+import { shareLink, composeShareText } from '../../utils/shareLinks';
 import { ChevronDown, ListPlus, Disc3, Sparkles, Share2 } from 'lucide-react';
 import { usePlayerStore } from '../../stores/playerStore';
 import { getCoverUrl } from '../../services/subsonic';
@@ -10,6 +10,19 @@ import { TracklistSection } from './TracklistSection';
 import { QueueSheet } from './QueueSheet';
 import { Visualizer } from './Visualizer';
 import { AudioEngine } from '../../engine/AudioEngine';
+
+function findActiveCueIndex(cues: readonly { timeSec: number }[] | undefined, time: number): number {
+  if (!cues || !Number.isFinite(time)) return -1;
+  let index = -1;
+  let latest = -Infinity;
+  cues.forEach((cue, i) => {
+    if (Number.isFinite(cue.timeSec) && cue.timeSec >= 0 && cue.timeSec <= time && cue.timeSec >= latest) {
+      latest = cue.timeSec;
+      index = i;
+    }
+  });
+  return index;
+}
 
 export function FullscreenPlayerOverlay() {
   const [isQueueOpen, setIsQueueOpen] = useState(false);
@@ -109,9 +122,19 @@ export function FullscreenPlayerOverlay() {
   const handleShare = async (fromCurrent: boolean) => {
     if (!currentSet) return;
     try {
-      const result = await shareLink({ title: 'Deel Liveset',
-        text: `Luister naar ${title} van ${artist} op Beatmonkey Crystal!`,
-        url: buildShareUrl(currentSet, fromCurrent ? AudioEngine.getCurrentTime() : 0),
+      const seconds = fromCurrent ? AudioEngine.getCurrentTime() : 0;
+      const liveSet = usePlayerStore.getState().currentSet || currentSet;
+      const tracklist = liveSet.tracklist;
+      const cueIndex = tracklist ? findActiveCueIndex(tracklist, seconds) : -1;
+      const cue = cueIndex >= 0 && tracklist ? tracklist[cueIndex] : null;
+      const text = composeShareText({
+        set: liveSet,
+        seconds,
+        cue,
+      });
+      const result = await shareLink({
+        title: 'Deel Liveset',
+        text,
       });
       setShareMessage(result === 'copied' ? 'Link gekopieerd.' : '');
       setIsShareDialogOpen(false);
@@ -163,6 +186,28 @@ export function FullscreenPlayerOverlay() {
             <p className="text-xs text-gray-500 mb-4">
               Huidig tijdstip: {formatTime(AudioEngine.getCurrentTime())}
             </p>
+
+            {(() => {
+              const liveSet = usePlayerStore.getState().currentSet || currentSet;
+              if (!liveSet) return null;
+              const currentTime = AudioEngine.getCurrentTime();
+              const tracklist = liveSet.tracklist;
+              const cueIdx = tracklist ? findActiveCueIndex(tracklist, currentTime) : -1;
+              const cue = cueIdx >= 0 && tracklist ? tracklist[cueIdx] : null;
+              const preview = composeShareText({
+                set: liveSet,
+                seconds: currentTime,
+                cue,
+              });
+              return (
+                <pre
+                  aria-label="Deeltekst"
+                  className="text-xs text-gray-300 bg-black/40 border border-white/10 rounded-xl p-3 mb-4 max-h-36 overflow-y-auto whitespace-pre-wrap font-mono select-all"
+                >
+                  {preview}
+                </pre>
+              );
+            })()}
 
             <button
               onClick={() => handleShare(true)}
