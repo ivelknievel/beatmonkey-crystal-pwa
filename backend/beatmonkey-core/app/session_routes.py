@@ -1,7 +1,8 @@
 """Session routes factory for isolated access and refresh token management."""
 
 import inspect
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Set
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.routing import APIRoute
@@ -16,6 +17,11 @@ MAX_TOKEN_LEN = 512
 MAX_USERNAME_LEN = 256
 MAX_PASSWORD_LEN = 1024
 MAX_REQUEST_BODY_BYTES = 4096
+
+ALLOWED_PUBLIC_ORIGINS: Set[str] = {
+    "https://music.cyberspeeze.online",
+    "https://api.cyberspeeze.online",
+}
 
 
 async def read_bounded_body(request: Request, max_bytes: int = MAX_REQUEST_BODY_BYTES) -> bytes:
@@ -81,8 +87,34 @@ def _resolve_and_validate_client(request: Request) -> str:
 def _validate_web_csrf_and_origin(request: Request) -> None:
     """Enforces exact origin matching and X-BM-CSRF: 1 for web client requests."""
     origin = request.headers.get("origin")
-    expected_origin = f"{request.url.scheme}://{request.url.netloc}".rstrip("/")
-    if not origin or origin.rstrip("/") != expected_origin:
+    if not origin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Origin mismatch or missing",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    norm_origin = origin.rstrip("/")
+    parsed_origin = urlparse(norm_origin)
+    origin_netloc = parsed_origin.netloc.lower()
+    request_host = request.url.netloc.lower()
+
+    # Determine if origin is valid:
+    # 1. Exact match with request URL origin (e.g. strict test environment https://testserver)
+    exact_request_origin = f"{request.url.scheme}://{request.url.netloc}".rstrip("/")
+    is_exact_match = (norm_origin == exact_request_origin)
+
+    # 2. Server-owned exact HTTPS public origins behind reverse proxy (e.g. Docker Uvicorn seeing http)
+    # Only allow insecure internal transport (http scheme seen by Uvicorn) when:
+    # - Origin is allowlisted in SERVER-OWNED exact HTTPS public origins
+    # - request Host matches parsedOrigin netloc (never trust arbitrary X-Forwarded headers)
+    is_allowlisted_proxy = (
+        norm_origin in ALLOWED_PUBLIC_ORIGINS
+        and parsed_origin.scheme == "https"
+        and request_host == origin_netloc
+    )
+
+    if not (is_exact_match or is_allowlisted_proxy):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Forbidden: Origin mismatch or missing",

@@ -586,3 +586,71 @@ class TestSessionRoutes(unittest.IsolatedAsyncioTestCase):
         res = await self.client.post("/api/auth/password", json=large_payload)
         self.assertEqual(res.status_code, 413)
         self.assertEqual(res.headers.get("Cache-Control"), "no-store")
+
+    async def test_proxy_origin_regression_docker_uvicorn(self) -> None:
+        """ASGI regression test: behind Docker Uvicorn (http base_url with Host: music.cyberspeeze.online).
+
+        - request base_url http://music.cyberspeeze.online + Origin https://music.cyberspeeze.online + X-BM-Client: web + X-BM-CSRF: 1
+          refresh missing cookie should return 401 NOT 403.
+        - malicious Origin https://evil.example.com must 403.
+        - spoofed X-Forwarded-Host must not grant access.
+        - public host different Origin must be rejected (403).
+        """
+        app = FastAPI()
+        router = create_session_router(
+            sessions=self.sessions,
+            current_user_dependency=lambda: self.users["user_alice"],
+            lookup_user_by_id=lambda uid: self.users.get(uid),
+            verify_password=lambda u, p: self.users.get("user_alice"),
+        )
+        app.include_router(router)
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://music.cyberspeeze.online") as client:
+            # Case 1: Legitimate request behind proxy (request sees http://music.cyberspeeze.online due to proxy termination)
+            # Origin is https://music.cyberspeeze.online, client: web, csrf: 1.
+            # Missing cookie in /api/auth/refresh should be 401 NOT 403!
+            res_legit = await client.post(
+                "/api/auth/refresh",
+                headers={
+                    "origin": "https://music.cyberspeeze.online",
+                    "x-bm-client": "web",
+                    "x-bm-csrf": "1",
+                },
+            )
+            self.assertEqual(res_legit.status_code, 401, f"Expected 401 Unauthorized for missing cookie, got {res_legit.status_code}")
+
+            # Case 2: Malicious origin https://evil.example.com must 403
+            res_evil = await client.post(
+                "/api/auth/refresh",
+                headers={
+                    "origin": "https://evil.example.com",
+                    "x-bm-client": "web",
+                    "x-bm-csrf": "1",
+                },
+            )
+            self.assertEqual(res_evil.status_code, 403)
+
+            # Case 3: Malicious origin with spoofed X-Forwarded-Host must not grant access (must 403)
+            res_spoof = await client.post(
+                "/api/auth/refresh",
+                headers={
+                    "origin": "https://evil.example.com",
+                    "x-forwarded-host": "music.cyberspeeze.online",
+                    "x-bm-client": "web",
+                    "x-bm-csrf": "1",
+                },
+            )
+            self.assertEqual(res_spoof.status_code, 403)
+
+            # Case 4: Public host different Origin (e.g. Origin is https://api.cyberspeeze.online while host is music.cyberspeeze.online)
+            # requestHost differs from parsedOrigin netloc, or cross-domain origin -> reject 403
+            res_diff_origin = await client.post(
+                "/api/auth/refresh",
+                headers={
+                    "origin": "https://api.cyberspeeze.online",
+                    "x-bm-client": "web",
+                    "x-bm-csrf": "1",
+                },
+            )
+            self.assertEqual(res_diff_origin.status_code, 403)
