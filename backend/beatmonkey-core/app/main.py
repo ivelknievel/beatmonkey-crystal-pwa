@@ -46,6 +46,7 @@ from app.navidrome_client import create_navidrome_user
 from app.metadata_service import DJMetadataService
 from app.set79_scraper import scrape_set79, normalize_set79_url
 from app.id_track_resolver import router as id_track_resolver_router
+from app.unified_runtime import configure_unified, install_unified
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -105,14 +106,18 @@ def verify_admin(credentials: HTTPBasicCredentials = Depends(security_basic)):
     return credentials.username
 
 @app.on_event("startup")
-def on_startup():
+async def on_startup():
     validate_security_configuration()
     init_db()
     sync_users_cache()
+    runtime = configure_unified()
+    await runtime.start()
 
 @app.on_event("shutdown")
 async def on_shutdown():
     await metadata_service.close()
+    runtime = configure_unified()
+    await runtime.stop()
 
 def get_token_from_request(
     request: Request,
@@ -142,6 +147,9 @@ def get_current_user(token: str = Depends(get_token_from_request)) -> dict:
             detail="Invalid or expired token"
         )
     return payload
+
+# Register unified session and download routers
+install_unified(app, get_current_user)
 
 def get_current_admin_user(current_user: dict = Depends(get_current_user)) -> dict:
     if not current_user.get("is_admin"):

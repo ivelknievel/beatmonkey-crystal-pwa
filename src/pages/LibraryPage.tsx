@@ -6,6 +6,7 @@ import { SearchBar } from '../components/Library/SearchBar';
 import { AlphabeticalIndex } from '../components/Library/AlphabeticalIndex';
 import { DJGrid } from '../components/Library/DJGrid';
 import { LoadingSpinner } from '../components/Shared/LoadingSpinner';
+import { YouTubeDownloadPanel } from '../components/YouTubeDownloadPanel';
 
 export function LibraryPage() {
   const [loading, setLoading] = useState(true);
@@ -92,6 +93,9 @@ export function LibraryPage() {
           <span className="text-xs text-gray-400 block">Artiesten</span>
         </div>
       </header>
+
+      {/* YouTube Download Panel */}
+      <YouTubeDownloadPanel />
 
       {/* Search & Alphabetical Controls */}
       <div className="space-y-3">
