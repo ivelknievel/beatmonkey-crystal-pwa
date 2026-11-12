@@ -7,6 +7,7 @@ import { EqualizerIndicator } from './EqualizerIndicator';
 export interface TrackRowProps {
   track: TrackCue;
   isActive: boolean;
+  isPlaying?: boolean;
   onSeek: () => void;
   onShare?: () => void;
   onSpotifySearch?: () => void;
@@ -17,6 +18,7 @@ export interface TrackRowProps {
 export function TrackRow({
   track,
   isActive,
+  isPlaying = false,
   onSeek,
   onShare,
   onSpotifySearch,
@@ -135,12 +137,7 @@ export function TrackRow({
         </div>
 
         {isActive && (
-          <>
-            <EqualizerIndicator color="#FF4081" />
-            <div className="px-1 py-0.5 rounded-md bg-[#FF4081]/20 border border-[#FF4081]/50 flex-shrink-0">
-              <span className="text-[9px] font-black text-[#FF4081]">LIVE</span>
-            </div>
-          </>
+          <EqualizerIndicator color="#FF4081" isPlaying={Boolean(isPlaying)} />
         )}
 
         <div

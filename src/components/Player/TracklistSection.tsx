@@ -58,6 +58,7 @@ export function TracklistSection({
   );
 
   const [tracklist, setTracklist] = useState<TrackCue[]>([]);
+  const [tracklistSetId, setTracklistSetId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showManualDialog, setShowManualDialog] = useState(false);
@@ -68,6 +69,7 @@ export function TracklistSection({
   const currentTime = usePlayerStore(s => s.currentTime);
   const duration = usePlayerStore(s => s.duration);
   const currentSet = usePlayerStore(s => s.currentSet);
+  const storeCurrentSetId = usePlayerStore(s => s.currentSetId);
   const currentSetId = currentSet?.id; // Discovery expects the album identity, never the engine song id.
   const requestGeneration = useRef(0);
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -114,6 +116,7 @@ export function TracklistSection({
       if (!isCurrent()) return;
       const list = normalizeTracks(data);
       setTracklist(list);
+      setTracklistSetId(currentSetId);
       usePlayerStore.getState().setTracklistForSet(currentSetId, list);
     } catch {
       if (isCurrent()) setError('Tracklist niet beschikbaar');
@@ -124,6 +127,7 @@ export function TracklistSection({
 
   useEffect(() => {
     setTracklist([]);
+    setTracklistSetId(null);
     setShowManualDialog(false);
     setManualSubmitting(false);
     setManualUrl('');
@@ -177,7 +181,13 @@ export function TracklistSection({
     }
   }
 
-  const activeTrack = tracklist[activeCueIndex];
+  const isCurrentSetActive = Boolean(
+    currentSetId &&
+    tracklistSetId === currentSetId &&
+    (!storeCurrentSetId || storeCurrentSetId === currentSetId)
+  );
+  const isCurrentSetPlaying = isCurrentSetActive && Boolean(isPlaying) && (!status || status === 'playing');
+  const activeTrack = isCurrentSetActive && activeCueIndex >= 0 ? tracklist[activeCueIndex] : undefined;
   const totalDurationSec = duration > 0 ? duration : 3600;
 
   const miniPlayerTitle = activeTrack?.title || currentSet?.title || 'Beatmonkey Crystal';
@@ -212,6 +222,7 @@ export function TracklistSection({
         if (!isCurrent()) return;
         const list = normalizeTracks(data);
         setTracklist(list);
+        setTracklistSetId(currentSetId);
         usePlayerStore.getState().setTracklistForSet(currentSetId, list);
         setLoading(false);
       }
@@ -463,7 +474,8 @@ export function TracklistSection({
                   {/* Track list */}
                   <div ref={listRef} className="space-y-1.5 pb-4">
                     {tracklist.map((track, i) => {
-                      const isTrackActive = i === activeCueIndex;
+                      const isTrackActive = isCurrentSetActive && i === activeCueIndex;
+                      const isTrackPlaying = isTrackActive && isCurrentSetPlaying;
                       let playProgress = 0;
 
                       if (isTrackActive) {
@@ -489,6 +501,7 @@ export function TracklistSection({
                           key={i}
                           track={track}
                           isActive={isTrackActive}
+                          isPlaying={isTrackPlaying}
                           playProgress={playProgress}
                           trackNumber={i + 1}
                           onSeek={() => {
